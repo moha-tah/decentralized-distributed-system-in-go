@@ -9,8 +9,6 @@ import (
 
 func Sensor(sensor_name *string) {
 	var clk int = 0 // clock
-
-	fmt.Println("Sensor activated!")
 	for {
 		clk  = clk + 1
 

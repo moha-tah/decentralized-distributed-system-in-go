@@ -14,6 +14,65 @@ The goal is to observe the impact of verifier parameters on user behaviors.
 
 Each node maintains a **local replica** of the shared dataset (past 15 days of temperature readings) and participates in maintaining **consistency** between replicas using a **distributed mutual exclusion algorithm** based on **Lamport timestamps**.
 
+
+---
+
+## Usage 🔌
+
+Build: 
+```bash
+go build main.go
+```
+
+Then, to create a connection between a Sensor (which send a message every two seconds) and 
+a Verifier (which prints the received message): 
+
+```bash
+./main -node_type sensor | ./main -node_type verifier
+```
+
+which produces:
+```bash
+ + [Verifier_1 163913] main     : Verifier_1 received </=sender_name=Sensor 1/=clk=1>
+ + [Verifier_1 163913] main     : Verifier_1 received </=sender_name=Sensor 1/=clk=2>
+ + [Verifier_1 163913] main     : Verifier_1 received </=sender_name=Sensor 1/=clk=3>
+```
+
+The `main` program takes the arguments:
+
+| Argument     | Meaning                                                |
+|--------------|--------------------------------------------------------|
+| `-node_type` | Type of node: sensor, verifier, user (default: sensor) |
+| `-node_name` | Name of the node (default: "Sensor 1")                 |
+
+
+---
+
+## Project structure ⚒️
+
+```
+distributed-system
+├── main.go
+├── node
+│   ├── sensor.go
+│   ├── user.go
+│   ├── verifier.go
+├── format
+│   ├── format.go
+│   ├── message.go
+├── utils
+│   ├── utils.go
+├── go.mod
+├── README.md
+```
+
+| File                | Content                                                                                  |
+|---------------------|------------------------------------------------------------------------------------------|
+| `main.go`           | call the function of its type in the associated `node` file                              |
+| `format/format.go`  | String formatting logic for displaying                                                   |
+| `format/message.go` | Messaging logic: format a message based on keys-values; find value of a key in a message |
+| `utils/utils.go`    | Utility function: `Synchronise` to synchronise clocks                                    |
+
 ---
 
 ## Node Types 📑

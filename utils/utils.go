@@ -1,7 +1,7 @@
 package utils 
 
 
-func Recaler(x, y int) int {
+func Synchronise(x, y int) int {
     if x < y {
         return y + 1
     }
