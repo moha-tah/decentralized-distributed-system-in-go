@@ -1,4 +1,4 @@
-# Distributed Data Sharing System (applied to Temperature) 🌦️$\to$ ⚙️ $\to$ 📈
+# Distributed Data Sharing System (applied to Temperature) 🌦️ $\to$ ⚙️ $\to$ 📈
 
 ## Project Description 🗃️
 
