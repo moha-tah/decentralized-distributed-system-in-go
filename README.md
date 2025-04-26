@@ -237,7 +237,7 @@ Below if a sequence diagram of the synchronisation algorithme where Verifiers re
 They only have to request data exclusivity to other Verifiers (ie not Sensors nor Users), as only Verifiers updates data.
 
 
-```mermdaid
+```mermaid
 sequenceDiagram
     participant V1 as Verifier 1
     participant V2 as Verifier 2
