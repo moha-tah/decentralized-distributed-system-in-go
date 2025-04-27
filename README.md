@@ -45,7 +45,7 @@ The `main` program takes the arguments:
 | `-node_type` | Type of node: sensor, verifier, user (default: sensor) |
 | `-node_name` | Name of the node (default: "Sensor 1")                 |
 
-To create a unidirectional ring network, use the `entwork_ring_unidirectional.sh` script:
+To create a unidirectional ring network, use the `network_ring_unidirectional.sh` script:
 
 ```bash
 $ ./network_ring_unidirectional.sh \                                                                                                                      
