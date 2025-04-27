@@ -1,7 +1,7 @@
 package node
 
 import (
-	// "fmt"
+	"fmt"
 	"bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
 	"os"
 	"distributed_system/format"
@@ -20,6 +20,7 @@ func Verifier(verifier_name *string) {
 			*verifier_name,
 			*verifier_name + " received <" + rcvmsg + ">"))
 
+		fmt.Println(rcvmsg)
 	}
 
 }

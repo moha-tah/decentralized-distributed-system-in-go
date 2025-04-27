@@ -22,5 +22,8 @@ func main() {
 		node.Sensor(node_name)
 	} else if *node_type == "verifier" {
 		node.Verifier(node_name)
+	} else if *node_type == "user" {
+		node.User(node_name)
 	}
+
 }

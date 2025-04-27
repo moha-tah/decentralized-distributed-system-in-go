@@ -45,48 +45,35 @@ The `main` program takes the arguments:
 | `-node_type` | Type of node: sensor, verifier, user (default: sensor) |
 | `-node_name` | Name of the node (default: "Sensor 1")                 |
 
+To create a unidirectional ring network, use the `entwork_ring_unidirectional.sh` script:
 
----
+```bash
+$ ./network_ring_unidirectional.sh \                                                                                                                      
+  A:-node_type,sensor \
+  B:-node_type,verifier,-node_name,verifier_1 \
+  C:-node_type,user,-node_name,user_1 \
+  D:-node_type,user,-node_name,user_2
 
-## Project structure ⚒️
+
+✅ Launched 4-node unidirectional ring: A B C D
+   (Ctrl+C to stop and clean up)
+ + [  verifier_1 272463] main     : verifier_1 received </=sender_name=Sensor 1/=clk=1>
+ + [      user_1 272464] main     : user_1 received </=sender_name=Sensor 1/=clk=1>
+ + [      user_2 272465] main     : user_2 received </=sender_name=Sensor 1/=clk=1>
+
+ + [  verifier_1 272463] main     : verifier_1 received </=sender_name=Sensor 1/=clk=2>
+ + [      user_1 272464] main     : user_1 received </=sender_name=Sensor 1/=clk=2>
+ + [      user_2 272465] main     : user_2 received </=sender_name=Sensor 1/=clk=2>
+
+ + [  verifier_1 272463] main     : verifier_1 received </=sender_name=Sensor 1/=clk=3>
+ + [      user_1 272464] main     : user_1 received </=sender_name=Sensor 1/=clk=3>
+ + [      user_2 272465] main     : user_2 received </=sender_name=Sensor 1/=clk=3>
 
 ```
-distributed-system
-├── main.go
-├── node
-│   ├── sensor.go
-│   ├── user.go
-│   ├── verifier.go
-├── format
-│   ├── format.go
-│   ├── message.go
-├── utils
-│   ├── utils.go
-├── go.mod
-├── README.md
-```
 
-| File                | Content                                                                                  |
-|---------------------|------------------------------------------------------------------------------------------|
-| `main.go`           | call the function of its type in the associated `node` file                              |
-| `format/format.go`  | String formatting logic for displaying                                                   |
-| `format/message.go` | Messaging logic: format a message based on keys-values; find value of a key in a message |
-| `utils/utils.go`    | Utility function: `Synchronise` to synchronise clocks                                    |
+It can be seen from above result that all receiving nodes (`verifier_1`, `user_1`, `user_2`) are receiving the messages from the only sender `Sensor 1`.
 
----
-
-## Node Types 📑
-
-- **Sensor Nodes**  
-  Periodically generate new temperature readings.  
-  Insert new data into the local replica, ensuring mutual exclusion using Lamport's distributed queue before updating peers.
-
-- **Verifier Nodes**  
-  Continuously check past temperature readings for anomalies.  
-  Correct invalid data by locking the critical section, applying the fix, and propagating the update across all nodes.
-
-- **User Nodes**  
-  Use the available (verified or unverified) local data to perform predictions, such as forecasting tomorrow’s temperature trends.
+Below is a **bi**directional ring network (`network_ring.sh`):
 
 ![ring network demo image](docs/ring_network.png)
 
@@ -127,6 +114,8 @@ distributed-system
 3. Once access is granted, it inserts the new data and multicasts the update.
 4. **Verifiers** independently scan local replicas, detect anomalies (e.g., an impossible 200°C reading), and correct them through the same distributed locking mechanism.
 5. **Users** read all local data to predict the temperature for April 26th without needing to lock.
+
+---
 
 ## Data Flow 🌊
 
