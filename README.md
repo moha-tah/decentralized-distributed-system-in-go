@@ -88,6 +88,8 @@ distributed-system
 - **User Nodes**  
   Use the available (verified or unverified) local data to perform predictions, such as forecasting tomorrow’s temperature trends.
 
+![ring network demo image](docs/ring_network.png)
+
 ---
 
 ## Key Features 💡
