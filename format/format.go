@@ -14,7 +14,7 @@ var pid = os.Getpid()
 var stderr = log.New(os.Stderr, "", 0)
 
 func Format_d(where string, who string, what string) string {
-	return fmt.Sprintf(" + [%12.12s %d] %-8.8s : %s\n",who, pid, where, what)
+	return fmt.Sprintf("%s + [%12.12s %d] %-8.8s : %s\n",raz, who, pid, where, what)
 }
 func Format_w(where string, who string, what string) string {
 	

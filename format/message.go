@@ -6,9 +6,9 @@ import (
 	"log"
 )
 
-func Findval(msg string, key string, p_nom *string) string {
+func Findval(msg string, key string, p_nom string) string {
 	if len(msg) < 4 {
-		stderr.Print(Format_w("findval", *p_nom, "message trop court : "+msg))
+		stderr.Print(Format_w("findval", p_nom, "message trop court : "+msg))
 		return ""
 	}
 	sep := msg[0:1]
@@ -23,8 +23,8 @@ func Findval(msg string, key string, p_nom *string) string {
 	return ""
 }
 
-func Msg_send(msg string, p_nom *string) {
-	stderr.Printf(Format_w("msg_send", *p_nom, "émission de "+msg))
+func Msg_send(msg string, p_nom string) {
+	stderr.Printf(Format_w("msg_send", p_nom, "émission de "+msg))
 	fmt.Print(msg + "\n")
 }
 
@@ -55,7 +55,7 @@ func Build_msg_args(args ...string) map[string]string {
 	// Check mandatory keys: at least sender_name and clk need
 	// to be present in the message = they have to be
 	// given as input to Build_msg_args
-	var mandatory_keys = []string{"sender_name", "clk"}
+	var mandatory_keys = []string{"sender_name", "clk", "destination", "id"}
 	for _, key := range mandatory_keys {
 		if _, ok := data[key]; !ok {
 			log.Fatal(Format_e(

@@ -4,13 +4,13 @@ set -euo pipefail
 # Usage check
 if [ $# -lt 1 ]; then
   cat >&2 <<EOF
-Usage: $0 NAME1:argA1,argA2… [NAME2:argB1,argB2…] …
+Usage: $0 NAME1:argA1,argA2… [NAME2:argB1,argB2…] 
 
 Example:
   $0 \
     A:-node_type,sensor \
-    B:-node_type,verifier,-node_name,verifier_1 \
-    C:-node_type,user,-node_name,user_1
+    B:-node_type,verifier \
+    C:-node_type,user
 EOF
   exit 1
 fi
@@ -31,8 +31,9 @@ for name in "${NAMES[@]}"; do
   [[ -p $fifo ]] || mkfifo "$fifo"
 done
 
-# 3) Launch each node in the background
-for name in "${NAMES[@]}"; do
+# 3) Launch each node in the background (with computed node_id)
+for idx in "${!NAMES[@]}"; do
+  name="${NAMES[$idx]}"
   # split the comma-list back into an array of args
   IFS=',' read -r -a node_args <<< "${OPTS[$name]}"
 
@@ -42,8 +43,8 @@ for name in "${NAMES[@]}"; do
     [[ $other != $name ]] && dests+=( "/tmp/in_$other" )
   done
 
-  # run the program
-  ./main "${node_args[@]}" \
+  # run the program with --node_id
+  ./main --node_id "$idx" "${node_args[@]}" \
     < "/tmp/in_$name" \
     | tee "${dests[@]}" &
 done
@@ -62,8 +63,8 @@ cleanup() {
 # 5) Trap signals
 trap cleanup INT QUIT TERM
 
-echo "✅ Launched ${#NAMES[@]} nodes: ${NAMES[*]}"
-echo "   (hit Ctrl+C to stop & clean up)"
+echo -e "\n\n✅ Launched ${#NAMES[@]} nodes: ${NAMES[*]}"
+echo -e "   (hit Ctrl+C to stop & clean up)\n\n"
 
 # 6) Wait for all background processes
 wait
