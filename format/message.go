@@ -2,8 +2,8 @@ package format
 
 import (
 	"fmt"
-	"strings"
 	"log"
+	"strings"
 )
 
 func Findval(msg string, key string, p_nom string) string {
@@ -23,8 +23,35 @@ func Findval(msg string, key string, p_nom string) string {
 	return ""
 }
 
+func Replaceval(msg string, key string, new_val string) string {
+	if len(msg) < 2 {
+		stderr.Print(Format_w("message.go", "Replaceval", "message trop court : "+msg))
+		return ""
+	}
+	sep := msg[0:1]
+	tab_allkeyvals := strings.Split(msg[1:], sep)
+	for i, keyval := range tab_allkeyvals {
+		if len(keyval) < 2 {
+			continue
+		}
+		equ := keyval[0:1]
+		tabKeyVal := strings.SplitN(keyval[1:], equ, 2)
+		if len(tabKeyVal) != 2 {
+			continue
+		}
+		if tabKeyVal[0] == key {
+			// Replace value
+			tab_allkeyvals[i] = equ + key + equ + new_val
+			break
+		}
+	}
+	// Reconstruct the message
+	return sep + strings.Join(tab_allkeyvals, sep)
+
+}
+
 func Msg_send(msg string, p_nom string) {
-	stderr.Printf(Format_w("msg_send", p_nom, "émission de "+msg))
+	stderr.Printf(Format_w(p_nom, "Msg_send()", "émission de "+msg))
 	fmt.Print(msg + "\n")
 }
 

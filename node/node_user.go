@@ -39,28 +39,11 @@ func (u *UserNode) Start()  error {
 
 	u.isRunning = true
 
-	// go func() {
-	//
-	// 	reader := bufio.NewReader(os.Stdin)
-	//
-	// 	for {
-	// 	    rcvmsg, err := reader.ReadString('\n') // read until newline
-	// 	    if err != nil {
-	// 		// Handle error properly, e.g., if the connection is closed
-	// 		format.Display(format.Format_e("node_user.go", "Start()", "Reading error: " + err.Error()))
-	// 		return
-	// 	    }
-	// 	    rcvmsg = strings.TrimSuffix(rcvmsg, "\n") // remove the trailing newline character
-	// 	    // u.HandleMessage(rcvmsg)
-	// 	}
-	//     }()
-
-
 	return nil
 }
 
 
-// HandleMessage processes incoming messages
+// HandleMessage processes incoming messages from control layer
 func (u *UserNode) HandleMessage(channel chan string) {
 
 	for msg := range channel {

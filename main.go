@@ -46,7 +46,7 @@ func main() {
 	control_layer := node.NewControlLayer(*node_id + "_control", child_node)
 
 	control_layer.Start()
-	child_node.Start()
+	// child_node.Start()
 
 	// Block forever or until signal
 	select {} // empty select blocks forever
