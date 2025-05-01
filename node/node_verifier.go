@@ -44,27 +44,11 @@ func (v *VerifierNode) Start()  error {
 
 	v.isRunning = true
 
-	// go func() {
-	//
-	// 	reader := bufio.NewReader(os.Stdin)
-	//
-	// 	for {
-	// 	    rcvmsg, err := reader.ReadString('\n') // read until newline
-	// 	    if err != nil {
-	// 		// Handle error properly, e.g., if the connection is closed
-	// 		format.Display(format.Format_e("Start()", "node_verifier.go", "Reading error: " + err.Error()))
-	// 		return
-	// 	    }
-	// 	    rcvmsg = strings.TrimSuffix(rcvmsg, "\n") // remove the trailing newline character
-	// 	    // v.HandleMessage(rcvmsg)
-	// 	}
-	//     }()
-
 	return nil
 }
 
 
-// HandleMessage processes incoming messages
+// HandleMessage processes incoming messages from control app
 func (v *VerifierNode) HandleMessage(channel chan string)  {
 
 

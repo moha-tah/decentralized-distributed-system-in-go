@@ -41,9 +41,10 @@ func (s *SensorNode) Start() error {
             	reading := s.generateReading()
             
 
+		var msg_id string = s.GenerateUniqueMessageID()
 		msg := format.Msg_format_multi(
 			format.Build_msg_args(
-				"id", s.GenerateUniqueMessageID(),
+				"id", msg_id,
 				"type", "new_reading",
 				"sender_name", s.GetName(),
 				"sender_type", s.Type(),
@@ -52,13 +53,11 @@ func (s *SensorNode) Start() error {
 				"content_type", "sensor_reading",
 				"content_value", strconv.FormatFloat(reading.Temperature, 'f', -1, 32)))
 
-		// format.Msg_send(msg, s.GetName())
-		if s.ctrlLayer.SendMsgFromApplication(msg) == nil {
-			// no error => message has been sent
+		if s.ctrlLayer.SendApplicationMsg(msg) == nil { // no error => message has been sent
 			s.nbMsgSent = s.nbMsgSent + 1
 		} 
 
-		time.Sleep(time.Duration(3) * time.Second)
+		time.Sleep(time.Duration(2) * time.Second)
             
 	}
 }
