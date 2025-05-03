@@ -51,7 +51,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 	    
 		// Update Lamport clock based on received message
 		msg_clock_int, _ := strconv.Atoi(msg_clock)
-		u.clock = utils.Synchronise(u.clock,  msg_clock_int)
+		u.clock = utils.Synchronise(u.clock, msg_clock_int)
 
 
 		var msg_type string = format.Findval(msg, "type", u.GetName())

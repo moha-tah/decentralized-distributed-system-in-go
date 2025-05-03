@@ -30,7 +30,7 @@ func (s *SensorNode) Start() error {
 	format.Display(format.Format_d(
 		"Start()",
 		"node_sensor.go",
-		"Starting sensor node " + s.ID()))
+		"Starting sensor node " + s.GetName()))
 
 	s.isRunning = true
     

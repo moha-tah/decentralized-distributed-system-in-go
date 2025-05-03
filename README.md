@@ -308,6 +308,16 @@ sequenceDiagram
 - **Efficient Broadcast** of updates to maintain replica synchronization.
 - **Fault-Tolerant Design** ready for simple peer-failure recovery (future work).
 
+### Pear Discovery
+
+Pear discovery works as so:
+
+- The node whose id is `0_control` (the first control node), no matter the application it is related to, will be the initiator and will send a `pear_discovery` message to all other control nodes (*after a wait of 1 second, to make sure all nodes did start*)
+- all control nodes will answer to `0_control` (directly, and only) with their own names
+- after another wait of 1 second, the initiator will accept all received names as definitive, as close the pear discovery. It will thus propagate all received node names to all nodes, so that every control layers know who is in the network (and thus how many).
+- The initiator will then start its application layer.
+- The other nodes, on startup, wait for 2 seconds (equivalent to initiator's 2 one second waits) before starting their application layer.
+
 ---
 
 ## Scenario Example 🎉

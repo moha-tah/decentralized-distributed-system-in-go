@@ -12,12 +12,13 @@ import (
 )
 
 type ControlLayer struct {
+	// mu   	  sync.RWMutex
 	id        string
 	nodeType  string
 	isRunning bool
 	clock     int
 	child	  Node
-	nbMsgSent int
+	nbMsgSent uint64
 	// Seen IDs of all received messages :
 	// keys are IDs, empty struct{} takes zero bytes
 	// To help preventing the reading of same msg if it loops
@@ -27,12 +28,13 @@ type ControlLayer struct {
 	nbOfKnownSites		int
 	knownSiteNames		[]string
 	sentDiscoveryMessage 	bool // To send its name only once
+	pearDiscoverySealed	bool 
 }
 func (c *ControlLayer) GetName() string {
 	return c.nodeType + " (" + c.id + ")"
 }
 func (c *ControlLayer) GenerateUniqueMessageID() string {
-	return "control_" + c.id + "_" + strconv.Itoa(c.nbMsgSent)
+	return "control_" + c.id + "_" + strconv.Itoa(int(c.nbMsgSent))
 }
 
 
@@ -48,12 +50,17 @@ func NewControlLayer(id string, child Node) *ControlLayer {
 		channel_to_application: make(chan string),
 		nbOfKnownSites: 1, // This layer knows itself at startup
 		sentDiscoveryMessage: false,
+		pearDiscoverySealed: false,
     }
 }
 
 // Start begins the control operations
-func (c ControlLayer) Start()  error {
+func (c *ControlLayer) Start()  error {
 	format.Display(format.Format_d("Start()", "control_layer.go", "Starting control layer " + c.GetName()))
+
+
+	// Notify child that this is its control layer it must talk to.
+	c.child.SetControlLayer(*c)
 
 	// TODO idea to know how many nodes exists:
 	// We can not send the pear discovery message RIGHT AT startup: other nodes won't be 
@@ -63,21 +70,28 @@ func (c ControlLayer) Start()  error {
 	// We then suppose that all the response will be aquired by the node 0 (only node which makes
 	// the call) after 1 seconds.
 	// 🔥ONLY node whose id is zero will send this message.
-	go func() {
-		if c.id == "0_control" {
+	if c.id == "0_control" {
+		go func() {
 			time.Sleep(time.Duration(1) * time.Second)
 			c.SendPearDiscovery()
 			time.Sleep(time.Duration(1) * time.Second)
 			c.ClosePearDiscovery() // Will send known names to all nodes
-		}
-	}()
+
+			// Start the child only after
+			c.child.Start()
+			go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
+		}()
+	} else {
+		go func() { // Wake up child only after pear discovery is finished
+			time.Sleep(time.Duration(2)*time.Second)
+
+			// Notify the child that its control layer has been created
+			c.child.Start()
+			go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
+		}()
+	}
 
 	c.isRunning = true
-
-	// Notify the child that its control layer has been created
-	c.child.SetControlLayer(c)
-	c.child.Start()
-	go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
 
 	go func() {
     
@@ -118,7 +132,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	// Update Lamport clock based on received message
 	var msg_clock string = format.Findval(msg, "clk", c.GetName())
 	msg_clock_int, _ := strconv.Atoi(msg_clock)
-	c.clock = utils.Synchronise(c.clock,  msg_clock_int)
+	c.clock = utils.Synchronise(c.clock, msg_clock_int)
 
 	// Extract msg caracteristics
 	var msg_destination string = format.Findval(msg, "destination", c.GetName())
@@ -177,19 +191,24 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			}
 		case "pear_discovery_sealing":
 			
-			// 💡The node responsible of pear discovery will also do the following, as 
-			// no condition on node id. Done that way in order to have the message dispayling
-			// the number of known nodes, even for the node 0.
-			var names_in_message string = format.Findval(msg, "content_value", c.GetName())
+			if c.pearDiscoverySealed == false {
+				c.pearDiscoverySealed= true
+				// 💡The node responsible of pear discovery will also do the following, as 
+				// no condition on node id. Done that way in order to have the message dispayling
+				// the number of known nodes, even for the node 0.
+				var names_in_message string = format.Findval(msg, "content_value", c.GetName())
 
-			c.knownSiteNames = strings.SplitN(names_in_message, "@", -1)
-			c.nbOfKnownSites = len(c.knownSiteNames)
-			
-			format.Display(format.Format_e(c.GetName(), "HandleMsg()", "Updated nb sites to " + strconv.Itoa(c.nbOfKnownSites)))
+				c.knownSiteNames = strings.SplitN(names_in_message, "@", -1)
+				c.nbOfKnownSites = len(c.knownSiteNames)
+				
+				format.Display(format.Format_e(c.GetName(), "HandleMsg()", "Updated nb sites to " + strconv.Itoa(c.nbOfKnownSites)))
 
-			// Propagate answer to other
-			var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
-			c.SendMsg(propagate_msg)
+				// Propagate answer to other
+				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
+				// New id to make sure initiator will receive it:
+				propagate_msg  = format.Replaceval(msg, "id", c.GenerateUniqueMessageID())
+				c.SendMsg(propagate_msg)
+			}
 
 		}
 	} else if msg_destination == c.GetName() { // The msg is only for the current node
@@ -252,7 +271,7 @@ func (c *ControlLayer) SendApplicationMsg(msg string) error {
 	var rcv_clk string = format.Findval(msg, "clk", c.GetName())
 	rcv_clk_int, _ := strconv.Atoi(rcv_clk)
 
-	c.clock = utils.Synchronise(c.clock, rcv_clk_int) 
+	c.clock = utils.Synchronise(c.clock, rcv_clk_int)
 
 	c.SendMsg(msg)
 
@@ -275,7 +294,7 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 			"sender_name", c.GetName(),
 			"sender_type", "control",
 			"destination", destination,
-			"clk", strconv.Itoa(c.clock), // Will be replaced in c.SendMsg
+			"clk", strconv.Itoa(int(c.clock)), // Will be replaced in c.SendMsg
 			"content_type", msg_content_type,
 			"content_value", msg_content))
 
@@ -286,10 +305,14 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 
 // Sending action
 func (c *ControlLayer) SendMsg(msg string) {
+	// Snapshot the clock under a read‐lock:
 	c.clock = c.clock + 1
+
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clock))
 	format.Msg_send(msg, c.GetName())
+
 	c.nbMsgSent = c.nbMsgSent + 1
+
 }
 
 // SendPearDiscovery sends a message asking for pear discovery 
@@ -309,6 +332,7 @@ func (c *ControlLayer) ClosePearDiscovery() {
 	// Append the current nodes name (node responsible of the pear dis.)
 	// as it did not received its own name.
 	c.knownSiteNames = append(c.knownSiteNames, c.GetName())
+
 	c.SendControlMsg(strings.Join(c.knownSiteNames, "@"), 
 		"siteNames", "pear_discovery_sealing", "control", "")
 }
