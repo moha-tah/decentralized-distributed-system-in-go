@@ -51,7 +51,11 @@ func Replaceval(msg string, key string, new_val string) string {
 }
 
 func Msg_send(msg string, p_nom string) {
-	stderr.Printf(Format_w(p_nom, "Msg_send()", "émission de "+msg))
+	if strings.Contains(msg, "pear_discovery") == false {
+		// Only print to stderr msg that are not related to pear_discovery
+		// (overwhelming)
+		stderr.Printf(Format_w(p_nom, "Msg_send()", "émission de "+msg))
+	}
 	fmt.Print(msg + "\n")
 }
 
