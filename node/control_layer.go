@@ -8,15 +8,17 @@ import (
 	"os" // Use for the bufio reader: reads from os stdin
 	"strconv"
 	"strings"
+	"time"
 )
 
 type ControlLayer struct {
+	// mu   	  sync.RWMutex
 	id        string
 	nodeType  string
 	isRunning bool
 	clock     int
 	child	  Node
-	nbMsgSent int
+	nbMsgSent uint64
 	// Seen IDs of all received messages :
 	// keys are IDs, empty struct{} takes zero bytes
 	// To help preventing the reading of same msg if it loops
@@ -25,13 +27,14 @@ type ControlLayer struct {
 
 	nbOfKnownSites		int
 	knownSiteNames		[]string
-	siteAskedDiscovery	string // Site responsible for the ongoing discovery
+	sentDiscoveryMessage 	bool // To send its name only once
+	pearDiscoverySealed	bool 
 }
 func (c *ControlLayer) GetName() string {
 	return c.nodeType + " (" + c.id + ")"
 }
 func (c *ControlLayer) GenerateUniqueMessageID() string {
-	return "control_" + c.id + "_" + strconv.Itoa(c.nbMsgSent)
+	return "control_" + c.id + "_" + strconv.Itoa(int(c.nbMsgSent))
 }
 
 
@@ -46,29 +49,49 @@ func NewControlLayer(id string, child Node) *ControlLayer {
 		seenIDs:   make(map[string]struct{}),
 		channel_to_application: make(chan string),
 		nbOfKnownSites: 1, // This layer knows itself at startup
+		sentDiscoveryMessage: false,
+		pearDiscoverySealed: false,
     }
 }
 
 // Start begins the control operations
-func (c ControlLayer) Start()  error {
+func (c *ControlLayer) Start()  error {
 	format.Display(format.Format_d("Start()", "control_layer.go", "Starting control layer " + c.GetName()))
 
+
+	// Notify child that this is its control layer it must talk to.
+	c.child.SetControlLayer(*c)
+
 	// TODO idea to know how many nodes exists:
-	// We wan not send the pear discovery message RIGHT AT startup: other nodes won't be 
+	// We can not send the pear discovery message RIGHT AT startup: other nodes won't be 
 	// created yet, at the network_ring.sh script creates nodes one after the other. So 
-	// the idea is to wait 2 seconds (which is much, 0,5s should be enough) for all the nodes 
-	// to be created, then sending the pear discovery message 
-	// go func() {
-	// 	time.Sleep(time.Duration(2) * time.Second)
-	// 	c.SendPearDiscovery()
-	// }()
+	// the idea is to wait 1 seconds (which is much, 0,1s should be enough) for all the nodes 
+	// to be created, then sending the pear discovery message.
+	// We then suppose that all the response will be aquired by the node 0 (only node which makes
+	// the call) after 1 seconds.
+	// 🔥ONLY node whose id is zero will send this message.
+	if c.id == "0_control" {
+		go func() {
+			time.Sleep(time.Duration(1) * time.Second)
+			c.SendPearDiscovery()
+			time.Sleep(time.Duration(1) * time.Second)
+			c.ClosePearDiscovery() // Will send known names to all nodes
+
+			// Start the child only after
+			c.child.Start()
+			go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
+		}()
+	} else {
+		go func() { // Wake up child only after pear discovery is finished
+			time.Sleep(time.Duration(2)*time.Second)
+
+			// Notify the child that its control layer has been created
+			c.child.Start()
+			go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
+		}()
+	}
 
 	c.isRunning = true
-
-	// Notify the child that its control layer has been created
-	c.child.SetControlLayer(c)
-	c.child.Start()
-	go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
 
 	go func() {
     
@@ -100,12 +123,16 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	}
 	c.AddNewMessageId(msg_id)
 
-	format.Display(format.Format_w(c.GetName(), "HandleMsg", "Received: " + msg))
+	if strings.Contains(msg, "pear_discovery") == false {
+		// Only print to stderr msg that are not related to pear_discovery
+		// (overwhelming)
+		format.Display(format.Format_w(c.GetName(), "HandleMsg()", "Received: " + msg))
+	}
     
 	// Update Lamport clock based on received message
 	var msg_clock string = format.Findval(msg, "clk", c.GetName())
 	msg_clock_int, _ := strconv.Atoi(msg_clock)
-	c.clock = utils.Synchronise(c.clock,  msg_clock_int)
+	c.clock = utils.Synchronise(c.clock, msg_clock_int)
 
 	// Extract msg caracteristics
 	var msg_destination string = format.Findval(msg, "destination", c.GetName())
@@ -146,42 +173,75 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		switch msg_type {
 
 		case "pear_discovery":
-			var sender string = format.Findval(msg, "original_sender_name", c.GetName())
+			if c.sentDiscoveryMessage == false && c.id != "0_control" {
+				// Send response (current node's name) to the control layer responsible
+				// of pear discovery. This message will be sent only once thanks
+				// to c.sentDiscoveryMessage. The initiator of pear discovery won't send
+				// its name to itself.
+				// 🔥 Modify pear_discovery_answer if the bool is not used anymore.
+				c.SendControlMsg(c.GetName(), "siteName", "pear_discovery_answer",
+					format.Findval(msg, "content_value", c.GetName()), "")
 
-			if sender == c.GetName() {
-				// END OF DISCOVERY => Propagate answer to others
-				format.Display(format.Format_w(c.GetName(), "HandleMsg()", "Got all answers"))
+				// Then propagate the pear_discovery
+				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
+				c.SendMsg(propagate_msg)
 
-				rcv_nbOfKnownSites, _ := strconv.Atoi(format.Findval(msg, "content_value", c.GetName()))
-				c.nbOfKnownSites = rcv_nbOfKnownSites
-				format.Display(format.Format_e(c.GetName(), "HandleMsg()", "Updated nb sites to " + strconv.Itoa(rcv_nbOfKnownSites)))
-				// c.SendControlMsg(strconv.Itoa(c.nbOfKnownSites), "nbOfKnownSites", "pear_discovery_answer",
-					// "control", c.GetName(), "")
-
-			} else {
-				var nbSitesOngoing_str string = format.Findval(msg, "content_value", c.GetName())
-				nbSitesOngoing_int, err := strconv.Atoi(nbSitesOngoing_str)
-				if err != nil {
-					format.Display(format.Format_e(c.GetName(), "HandleMessage()", "Reading error: " + err.Error()))
-					return err
-				}
-
-				new_msg := format.Replaceval(msg, "content_value", strconv.Itoa(nbSitesOngoing_int + 1))
-
-				// Propagation: 
-				c.SendMsg(new_msg)
+				c.sentDiscoveryMessage = true
 
 			}
+		case "pear_discovery_sealing":
+			
+			if c.pearDiscoverySealed == false {
+				c.pearDiscoverySealed= true
+				// 💡The node responsible of pear discovery will also do the following, as 
+				// no condition on node id. Done that way in order to have the message dispayling
+				// the number of known nodes, even for the node 0.
+				var names_in_message string = format.Findval(msg, "content_value", c.GetName())
+
+				c.knownSiteNames = strings.SplitN(names_in_message, "@", -1)
+				c.nbOfKnownSites = len(c.knownSiteNames)
+				
+				format.Display(format.Format_e(c.GetName(), "HandleMsg()", "Updated nb sites to " + strconv.Itoa(c.nbOfKnownSites)))
+
+				// Propagate answer to other
+				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
+				// New id to make sure initiator will receive it:
+				propagate_msg  = format.Replaceval(msg, "id", c.GenerateUniqueMessageID())
+				c.SendMsg(propagate_msg)
+			}
+
+		}
+	} else if msg_destination == c.GetName() { // The msg is only for the current node
+		switch msg_type{
 		case "pear_discovery_answer":
-			// Propagate answer to other, and update value of current control layer
-			var nbSitesOngoing_str string = format.Findval(msg, "content_value", c.GetName())
-			nbSitesOngoing_int, _ := strconv.Atoi(nbSitesOngoing_str)
+			// Only the node responsible for the pear discovery will read these
+			// lines, as direct messaging only target this node in pear discovery process.
+			var newSiteName string = format.Findval(msg, "content_value", c.GetName())
+			
+			// Check if not alreay in known sites list. Will happend because of answer 
+			// message propagation (see case below) (which is a mandatory feature 
+			// -to bring message all the way to node 0- not a problem)
+			if strings.Contains(
+				strings.Join(c.knownSiteNames, "@"), // main string in which to check
+				newSiteName, 			     // site name checked
+				) == false {
+				c.knownSiteNames = append(c.knownSiteNames, newSiteName)
+			}
+		}
+	} else {
+		switch msg_type {
+		case "pear_discovery_answer":
+			// Here, a node receives the answer (name) of another node.
+			// So it must propagate this answer so that the node 0
+			// receives the answer. When propagating, it must keep 
+			// the same content_value, but can modify the sender_name (as 
+			// the node 0 fetches names in the content_value message field).
 
-			c.nbOfKnownSites = nbSitesOngoing_int // update value 
-			format.Display(format.Format_e(c.GetName(), "HandleMsg()", "Updated nb sites to " + nbSitesOngoing_str))
-
-			c.SendControlMsg(nbSitesOngoing_str, "nbOfKnownSites", "pear_discovery_answer",
-				"control", "")
+			// Change name to keep the messaging logic (sender name = name of the
+			// node which send the current message).
+			var propagation_message string = format.Replaceval(msg, "sender_name", c.GetName())
+			c.SendMsg(propagation_message)
+			
 		}
 	}
 
@@ -211,7 +271,7 @@ func (c *ControlLayer) SendApplicationMsg(msg string) error {
 	var rcv_clk string = format.Findval(msg, "clk", c.GetName())
 	rcv_clk_int, _ := strconv.Atoi(rcv_clk)
 
-	c.clock = utils.Synchronise(c.clock, rcv_clk_int) 
+	c.clock = utils.Synchronise(c.clock, rcv_clk_int)
 
 	c.SendMsg(msg)
 
@@ -234,7 +294,7 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 			"sender_name", c.GetName(),
 			"sender_type", "control",
 			"destination", destination,
-			"clk", strconv.Itoa(c.clock), // Will be replaced in c.SendMsg
+			"clk", strconv.Itoa(int(c.clock)), // Will be replaced in c.SendMsg
 			"content_type", msg_content_type,
 			"content_value", msg_content))
 
@@ -245,14 +305,34 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 
 // Sending action
 func (c *ControlLayer) SendMsg(msg string) {
+	// Snapshot the clock under a read‐lock:
 	c.clock = c.clock + 1
+
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clock))
 	format.Msg_send(msg, c.GetName())
+
 	c.nbMsgSent = c.nbMsgSent + 1
+
 }
 
-// SendPearDiscovery sends a message asking for pear discovery
+// SendPearDiscovery sends a message asking for pear discovery 
+// The content_value of the message is the name to which the 
+// nodes must answer (in this project, is fixed to node id 0)
+// (TODO: modify above if changed)
+// 🔥ONLY node whose id is zero will send the pear discovery message.
 func (c *ControlLayer) SendPearDiscovery() {
-	c.SendControlMsg(strconv.Itoa(c.nbOfKnownSites), "nbSitesPassedThrough",
-		"pear_discovery", "control", "")
+	c.SendControlMsg(c.GetName(), "siteName", "pear_discovery", "control", "")
+}
+
+// When closing, node 0 will send the names it acquired during 
+// pear discovery, so that all nodes can know which nodes are
+// in the network.
+// 🔥ONLY node whose id is zero will send this message.
+func (c *ControlLayer) ClosePearDiscovery() {
+	// Append the current nodes name (node responsible of the pear dis.)
+	// as it did not received its own name.
+	c.knownSiteNames = append(c.knownSiteNames, c.GetName())
+
+	c.SendControlMsg(strings.Join(c.knownSiteNames, "@"), 
+		"siteNames", "pear_discovery_sealing", "control", "")
 }

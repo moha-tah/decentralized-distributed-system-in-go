@@ -13,7 +13,6 @@ import (
 type VerifierNode struct {
     BaseNode
     // store              *storage.DataStore
-    clock              int
     processingCapacity int
     threshold          float64
     verificationLocks  map[string]bool  // Maps day IDs to lock status
@@ -28,7 +27,6 @@ func NewVerifierNode(id string, capacity int, threshold float64) *VerifierNode {
 		BaseNode:           NewBaseNode(id, "verifier"),
 		// store:              storage.NewDataStore(15), // 15 days retention
 		// clock:              lamport.NewClock(),
-		clock: 		    0,
 		processingCapacity: capacity,
 		threshold:          threshold,
 		verificationLocks:  make(map[string]bool),
@@ -57,7 +55,7 @@ func (v *VerifierNode) HandleMessage(channel chan string)  {
     
 	// Update Lamport clock based on received message
 	msg_clock_int, _ := strconv.Atoi(msg_clock)
-	v.clock = utils.Synchronise(v.clock,  msg_clock_int)
+	v.clock = utils.Synchronise(v.clock, msg_clock_int)
 
 
 	var msg_type string = format.Findval(msg, "type", v.GetName())

@@ -1,7 +1,7 @@
 package utils 
 
 
-func Synchronise(x, y int) int {
+func Synchronise(x int, y int) int {
     if x < y {
         return y + 1
     }

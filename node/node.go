@@ -32,7 +32,7 @@ type BaseNode struct {
 	id        	string
 	nodeType  	string
 	isRunning 	bool
-	clock     	int
+	clock     	int	
 	ctrlLayer 	ControlLayer
 	nbMsgSent	int
 }
