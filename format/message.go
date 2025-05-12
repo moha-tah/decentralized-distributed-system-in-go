@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sort"
 )
 
 func Findval(msg string, key string, p_nom string) string {
@@ -99,14 +100,23 @@ func Build_msg_args(args ...string) map[string]string {
 }
 
 // Msg_format_multi formats a message using multiple keys and multiple 
-// values (1 key - 1 value).
+// values (1 key - 1 value). Message is sorted alphabetically by keys
 // Usage :
 // 	data:= format.Build_msg_args("sender_name", *sensor_name, "clk2", strconv.Itoa(clk))
 // 	formatted := Msg_format_multi(data)
 func Msg_format_multi(kvPairs map[string]string) string {
 	result := ""
-	for key, val := range kvPairs {
-		result += fieldsep + keyvalsep + key + keyvalsep + val
+	keys := make([]string, 0, len(kvPairs))
+
+	// Collect and sort the keys
+	for key := range kvPairs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	// Iterate over sorted keys and build the result string
+	for _, key := range keys {
+		result += fieldsep + keyvalsep + key + keyvalsep + kvPairs[key]
 	}
 	return result
 }

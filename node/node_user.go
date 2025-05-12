@@ -18,8 +18,8 @@ type UserNode struct {
 	predictionModel    string
 	predictionWindow   time.Duration
 	predictionInterval time.Duration
-	lastPrediction     *float32  // pointer to allow nil value at start
-	recentReadings     []float32 // FIFO queue for the last readings
+	lastPrediction     *float32             // pointer to allow nil value at start
+	recentReadings     map[string][]float32 // FIFO queue per sender
 }
 
 // NewUserNode creates a new user node
@@ -30,7 +30,7 @@ func NewUserNode(id string, model string, window time.Duration) *UserNode {
 		predictionWindow:   window,
 		predictionInterval: 3 * time.Second, // Make new predictions hourly
 		lastPrediction:     nil,
-		recentReadings:     make([]float32, 0, utils.VALUES_TO_STORE),
+		recentReadings:     make(map[string][]float32),
 	}
 }
 
@@ -55,13 +55,14 @@ func (u *UserNode) HandleMessage(channel chan string) {
 
 		var msg_type string = format.Findval(msg, "type", u.GetName())
 		var msg_content_value string = format.Findval(msg, "content_value", u.GetName())
+		var msg_sender string = format.Findval(msg, "sender_name", u.GetName())
 
 		switch msg_type {
 		case "new_reading":
-			// Add the new reading to our local store
+			// Add the new reading to our local store for the specific sender
 			format.Display(format.Format_d(
 				"node_user.go", "HandleMessage()",
-				u.GetName()+" received the new reading <"+msg_content_value+">"))
+				u.GetName()+" received the new reading <"+msg_content_value+"> from "+msg_sender))
 
 			// Parse the reading value
 			readingVal, err := strconv.ParseFloat(msg_content_value, 32)
@@ -70,15 +71,22 @@ func (u *UserNode) HandleMessage(channel chan string) {
 				continue // Skip this message if parsing fails
 			}
 
-			// Add to FIFO queue
-			if len(u.recentReadings) >= utils.VALUES_TO_STORE {
-				// Remove the oldest element (slice trick)
-				u.recentReadings = u.recentReadings[1:]
+			// Get or create the queue for the sender
+			queue, exists := u.recentReadings[msg_sender]
+			if !exists {
+				queue = make([]float32, 0, utils.VALUES_TO_STORE)
 			}
-			u.recentReadings = append(u.recentReadings, float32(readingVal))
+
+			// Add to FIFO queue for this sender
+			if len(queue) >= utils.VALUES_TO_STORE {
+				// Remove the oldest element (slice trick)
+				queue = queue[1:]
+			}
+			queue = append(queue, float32(readingVal))
+			u.recentReadings[msg_sender] = queue // Update the map
 
 			// Optional: Log the current queue state for debugging
-			// log.Printf("%s: Current readings queue: %v", u.GetName(), u.recentReadings)
+			// log.Printf("%s: Current readings queue for %s: %v", u.GetName(), msg_sender, queue)
 		}
 
 	}

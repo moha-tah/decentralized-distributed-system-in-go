@@ -20,7 +20,7 @@ type VerifierNode struct {
 	lockRequests       map[string]map[string]int  // Maps day IDs to node IDs and timestamps
 	lockReplies        map[string]map[string]bool // Maps day IDs to node IDs and reply status
 	otherVerifiers     map[string]bool            // Set of other verifier node IDs
-	recentReadings     []float32                  // FIFO queue for the last readings
+	recentReadings     map[string][]float32       // FIFO queue per sender
 }
 
 // NewVerifierNode creates a new verifier node
@@ -34,7 +34,7 @@ func NewVerifierNode(id string, capacity int, threshold float64) *VerifierNode {
 		lockRequests:       make(map[string]map[string]int),
 		lockReplies:        make(map[string]map[string]bool),
 		otherVerifiers:     make(map[string]bool),
-		recentReadings:     make([]float32, 0, utils.VALUES_TO_STORE),
+		recentReadings:     make(map[string][]float32),
 	}
 }
 
@@ -59,13 +59,14 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 
 		var msg_type string = format.Findval(msg, "type", v.GetName())
 		var msg_content_value string = format.Findval(msg, "content_value", v.GetName())
+		var msg_sender string = format.Findval(msg, "sender", v.GetName()) // Get sender ID
 
 		switch msg_type {
 		case "new_reading":
-			// Add the new reading to our local store
+			// Add the new reading to our local store for the specific sender
 			format.Display(format.Format_d(
 				v.GetName(), "HandleMessage",
-				v.GetName()+" received the new reading <"+msg_content_value+">"))
+				v.GetName()+" received the new reading <"+msg_content_value+"> from "+msg_sender))
 
 			// Parse the reading value
 			readingVal, err := strconv.ParseFloat(msg_content_value, 32)
@@ -74,15 +75,22 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 				continue // Skip this message if parsing fails
 			}
 
-			// Add to FIFO queue
-			if len(v.recentReadings) >= utils.VALUES_TO_STORE {
-				// Remove the oldest element (slice trick)
-				v.recentReadings = v.recentReadings[1:]
+			// Get or create the queue for the sender
+			queue, exists := v.recentReadings[msg_sender]
+			if !exists {
+				queue = make([]float32, 0, utils.VALUES_TO_STORE)
 			}
-			v.recentReadings = append(v.recentReadings, float32(readingVal))
+
+			// Add to FIFO queue for this sender
+			if len(queue) >= utils.VALUES_TO_STORE {
+				// Remove the oldest element (slice trick)
+				queue = queue[1:]
+			}
+			queue = append(queue, float32(readingVal))
+			v.recentReadings[msg_sender] = queue // Update the map
 
 			// Optional: Log the current queue state for debugging
-			// log.Printf("%s: Current readings queue: %v", v.GetName(), v.recentReadings)
+			// log.Printf("%s: Current readings queue for %s: %v", v.GetName(), msg_sender, queue)
 
 		}
 	}
