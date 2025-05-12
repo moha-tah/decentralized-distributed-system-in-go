@@ -50,6 +50,9 @@ for idx in "${!NAMES[@]}"; do
   # split the comma-list into an argv array
   IFS=',' read -r -a node_args <<< "${OPTS[$name]}"
 
+  # build main
+  go build -o main main.go
+
   # invoke main with --node_id followed by other node_args
   ./main --node_id "$idx" "${node_args[@]}" \
     < "/tmp/in_$name" \
@@ -89,4 +92,3 @@ echo -e "\n\n✅ Launched ${COUNT}-node unidirectional ring: ${NAMES[*]}"
 echo -e "   (Ctrl+C to stop and clean up)\n\n"
 
 wait
-

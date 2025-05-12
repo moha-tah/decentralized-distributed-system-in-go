@@ -66,6 +66,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 
 			// Parse the reading value
 			readingVal, err := strconv.ParseFloat(msg_content_value, 32)
+
 			if err != nil {
 				log.Printf("%s: Error parsing reading value '%s': %v", u.GetName(), msg_content_value, err)
 				continue // Skip this message if parsing fails
@@ -86,7 +87,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 			u.recentReadings[msg_sender] = queue // Update the map
 
 			// Optional: Log the current queue state for debugging
-			// log.Printf("%s: Current readings queue for %s: %v", u.GetName(), msg_sender, queue)
+			log.Printf("%s: Current readings queue for %s: %v", u.GetName(), msg_sender, queue)
 		}
 
 	}

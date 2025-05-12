@@ -90,7 +90,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			v.recentReadings[msg_sender] = queue // Update the map
 
 			// Optional: Log the current queue state for debugging
-			// log.Printf("%s: Current readings queue for %s: %v", v.GetName(), msg_sender, queue)
+			log.Printf("%s: Current readings queue for %s: %v", v.GetName(), msg_sender, queue)
 
 		}
 	}
