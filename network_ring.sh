@@ -43,6 +43,9 @@ for idx in "${!NAMES[@]}"; do
     [[ $other != $name ]] && dests+=( "/tmp/in_$other" )
   done
 
+  # build main
+  go build -o main main.go
+
   # run the program with --node_id
   ./main --node_id "$idx" "${node_args[@]}" \
     < "/tmp/in_$name" \
@@ -68,4 +71,3 @@ echo -e "   (hit Ctrl+C to stop & clean up)\n\n"
 
 # 6) Wait for all background processes
 wait
-
