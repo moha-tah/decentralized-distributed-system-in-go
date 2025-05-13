@@ -4,7 +4,6 @@ import (
 	"bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
 	"distributed_system/format"
 	"distributed_system/utils"
-	"errors"
 	"os" // Use for the bufio reader: reads from os stdin
 	"strconv"
 	"strings"
@@ -19,10 +18,9 @@ type ControlLayer struct {
 	clock     int
 	child     Node
 	nbMsgSent uint64
-	// Seen IDs of all received messages :
-	// keys are IDs, empty struct{} takes zero bytes
+	// Seen IDs of all received messages:
 	// To help preventing the reading of same msg if it loops
-	seenIDs                map[string]struct{}
+	IDWatcher	       *utils.MIDWatcher
 	channel_to_application chan string
 
 	nbOfKnownSites       int
@@ -39,19 +37,19 @@ func (c *ControlLayer) GenerateUniqueMessageID() string {
 }
 
 func NewControlLayer(id string, child Node) *ControlLayer {
-	return &ControlLayer{
-		id:                     id,
-		nodeType:               "control",
-		isRunning:              false,
-		clock:                  0,
-		child:                  child,
-		nbMsgSent:              0,
-		seenIDs:                make(map[string]struct{}),
+    return &ControlLayer{
+		id: id,
+		nodeType: "control",
+		isRunning: false,
+		clock: 	   0,
+		child:	   child,
+		nbMsgSent: 0,
+		IDWatcher:  utils.NewMIDWatcher(),
 		channel_to_application: make(chan string),
-		nbOfKnownSites:         1, // This layer knows itself at startup
-		sentDiscoveryMessage:   false,
-		pearDiscoverySealed:    false,
-	}
+		nbOfKnownSites: 0, 
+		sentDiscoveryMessage: false,
+		pearDiscoverySealed: false,
+    }
 }
 
 // Start begins the control operations
@@ -112,14 +110,12 @@ func (c *ControlLayer) Start() error {
 
 // HandleMessage processes incoming messages
 func (c *ControlLayer) HandleMessage(msg string) error {
-
 	// Make sure we never saw this message before.
-	// It might happen eg. in a bidirectionnal ring
-	var msg_id string = format.Findval(msg, "id", c.GetName())
-	if _, ok := c.seenIDs[msg_id]; ok {
+	// It might happen eg. in a bidirectionnal ring 
+	if c.SawThatMessageBefore(msg) {
+
 		return nil
 	}
-	c.AddNewMessageId(msg_id)
 
 	if !strings.Contains(msg, "pear_discovery") {
 		// Only print to stderr msg that are not related to pear_discovery
@@ -136,6 +132,9 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	var msg_destination string = format.Findval(msg, "destination", c.GetName())
 	var msg_type string = format.Findval(msg, "type", c.GetName())
 	var msg_content_value string = format.Findval(msg, "content_value", c.GetName())
+	// Original Sender: (used in IDWatcher to check if a msg from this node has already
+	// been received)
+	var sender_name_source string = format.Findval(msg, "sender_name_source", c.GetName())
 
 	// Will be used at the end to check if
 	// control layer needs to resend the message to all other nodes
@@ -161,8 +160,12 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			// to propagate to other distant apps, so we use the below
 			// function, even though is was thought as a function
 			// that does localapp => send to other. It can be used as both.
-			c.SendControlMsg(msg_content_value, format.Findval(msg, "content_type", c.GetName()),
-				msg_type, msg_destination, msg_id)
+
+			// As it is a propagation, use the same msg_id as in received msg:
+			var msg_id string = format.Findval(msg, "id", c.GetName())
+
+			c.SendControlMsg(msg_content_value, format.Findval(msg, "content_type", c.GetName()), 
+				msg_type, msg_destination, msg_id, sender_name_source)
 		}
 
 	} else if msg_destination == "control" {
@@ -178,7 +181,9 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				// its name to itself.
 				// 🔥 Modify pear_discovery_answer if the bool is not used anymore.
 				c.SendControlMsg(c.GetName(), "siteName", "pear_discovery_answer",
-					format.Findval(msg, "content_value", c.GetName()), "")
+					// Destination = source written in content_value
+					format.Findval(msg, "content_value", c.GetName()), 
+					"", c.GetName())
 
 				// Then propagate the pear_discovery
 				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
@@ -203,8 +208,6 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 
 				// Propagate answer to other
 				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
-				// New id to make sure initiator will receive it:
-				propagate_msg = format.Replaceval(msg, "id", c.GenerateUniqueMessageID())
 				c.SendMsg(propagate_msg)
 			}
 
@@ -224,6 +227,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				newSiteName,                         // site name checked
 			) {
 				c.knownSiteNames = append(c.knownSiteNames, newSiteName)
+				c.nbOfKnownSites += 1
 			}
 		}
 	} else {
@@ -247,9 +251,13 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 }
 
 // AddNewMessageId adds an entry in the seenIDs to remember
-// that the control layer saw this message.
-func (c *ControlLayer) AddNewMessageId(id string) {
-	c.seenIDs[id] = struct{}{} // Zero bytes of storage
+// that the control layer saw this message. 
+func (c *ControlLayer) AddNewMessageId(sender_name string, MID_str string) {
+	msg_NbMessageSent, err := utils.MIDFromString(MID_str)
+	if err != nil {
+		format.Display(format.Format_e("AddNewMessageID()", c.GetName(), "Error in message id: " + err.Error()))
+	}
+	c.IDWatcher.AddMIDToNode(sender_name, msg_NbMessageSent)
 }
 
 // SendMsgFromApplication is the portal between control layer and application
@@ -258,13 +266,6 @@ func (c *ControlLayer) AddNewMessageId(id string) {
 // so no check if already got the message (=already seen the ID).
 // => Is it a receiving action followed by a call to sending action
 func (c *ControlLayer) SendApplicationMsg(msg string) error {
-	var id string = format.Findval(msg, "id", c.GetName())
-	if id != "" {
-		c.AddNewMessageId(id)
-	} else {
-		return errors.New("No id in message: <" + msg + ">")
-	}
-
 	var rcv_clk string = format.Findval(msg, "clk", c.GetName())
 	rcv_clk_int, _ := strconv.Atoi(rcv_clk)
 
@@ -275,8 +276,11 @@ func (c *ControlLayer) SendApplicationMsg(msg string) error {
 	return nil
 }
 
-func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type string,
-	msg_type string, destination string, fixed_id string) error {
+// Send a Message (from this control layer). If is it a propagation, then 
+// set `fixed_clock` to the same clock as received message to propagate.
+func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type string, 
+					msg_type string,destination string, fixed_id string,
+					sender_name_source string) error {
 	var msg_id string
 	if fixed_id == "" {
 		msg_id = c.GenerateUniqueMessageID()
@@ -289,6 +293,7 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 			"id", msg_id,
 			"type", msg_type,
 			"sender_name", c.GetName(),
+			"sender_name_source", sender_name_source,
 			"sender_type", "control",
 			"destination", destination,
 			"clk", strconv.Itoa(int(c.clock)), // Will be replaced in c.SendMsg
@@ -302,7 +307,16 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 
 // Sending action
 func (c *ControlLayer) SendMsg(msg string) {
-	// Snapshot the clock under a read‐lock:
+
+	// As this node sends the message, it doens't want to receive 
+	// a duplicate => add the message ID to ID watcher
+	var msg_id_str string = format.Findval(msg, "id", c.GetName())
+	var msg_splits [] string = strings.Split(msg_id_str, "_")
+	var msg_NbMessageSent_str string = msg_splits[len(msg_splits)-1]
+	// The sender can also be the app layer, so check for that:
+	var msg_sender string = format.Findval(msg, "sender_name_source", c.GetName())
+	c.AddNewMessageId(msg_sender, msg_NbMessageSent_str)
+
 	c.clock = c.clock + 1
 
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clock))
@@ -318,7 +332,7 @@ func (c *ControlLayer) SendMsg(msg string) {
 // (TODO: modify above if changed)
 // 🔥ONLY node whose id is zero will send the pear discovery message.
 func (c *ControlLayer) SendPearDiscovery() {
-	c.SendControlMsg(c.GetName(), "siteName", "pear_discovery", "control", "")
+	c.SendControlMsg(c.GetName(), "siteName", "pear_discovery", "control", "", c.GetName())
 }
 
 // When closing, node 0 will send the names it acquired during
@@ -329,7 +343,37 @@ func (c *ControlLayer) ClosePearDiscovery() {
 	// Append the current nodes name (node responsible of the pear dis.)
 	// as it did not received its own name.
 	c.knownSiteNames = append(c.knownSiteNames, c.GetName())
+	c.nbOfKnownSites += 1
+	
+	// Display update nb of site as all other nodes will do when receiving:
+	format.Display(format.Format_e(c.GetName(), "ClosePearDis()", "Updated nb sites to " + strconv.Itoa(c.nbOfKnownSites)))
 
-	c.SendControlMsg(strings.Join(c.knownSiteNames, "@"),
-		"siteNames", "pear_discovery_sealing", "control", "")
+	c.SendControlMsg(strings.Join(c.knownSiteNames, "@"), 
+		"siteNames", "pear_discovery_sealing", "control", "", c.GetName())
+}
+
+// Return true if the message's ID is contained with 
+// one of the controler's ID pairs. If it is not contains,
+// it adds it to the interval (see utils.message_watch) 
+// and return false.
+func (c *ControlLayer) SawThatMessageBefore(msg string) bool {
+	var msg_id_str string = format.Findval(msg, "id", c.GetName())
+
+	var msg_splits [] string = strings.Split(msg_id_str, "_")
+	var msg_NbMessageSent_str string = msg_splits[len(msg_splits)-1]
+
+	msg_NbMessageSent, err := utils.MIDFromString(msg_NbMessageSent_str)
+	if err != nil {
+		format.Display(format.Format_e("SawThatMessageBefore()", c.GetName(), "Error in message id: " + err.Error()))
+	}
+
+	var sender_name string = format.Findval(msg, "sender_name_source", c.GetName())
+
+	// Never saw that message before
+	if c.IDWatcher.ContainsMID(sender_name, msg_NbMessageSent) == false {
+		c.IDWatcher.AddMIDToNode(sender_name, msg_NbMessageSent)
+		return false
+	}
+	// Saw that message before as it is contained in intervals:
+	return true
 }
