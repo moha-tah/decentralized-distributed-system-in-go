@@ -47,6 +47,7 @@ func (s *SensorNode) Start() error {
 				"id", msg_id,
 				"type", "new_reading",
 				"sender_name", s.GetName(),
+				"sender_name_source", s.GetName(),
 				"sender_type", s.Type(),
 				"destination", "applications",
 				"clk", strconv.Itoa(s.clock),
