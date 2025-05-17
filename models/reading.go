@@ -47,3 +47,25 @@ func (wp WeatherPrediction) String() string {
         wp.Confidence * 100,
     )
 }
+
+// FlattenReadings takes a map of sensor IDs to slices of readings and flattens 
+// it into a single slice of readings. This is useful for processing or displaying
+// all readings together.
+func FlattenReadings(readingsMap map[string][]Reading) []Reading {
+    // First, calculate the total number of readings
+    total := 0
+    for _, readings := range readingsMap {
+        total += len(readings)
+    }
+
+    // Preallocate the slice
+    flattened := make([]Reading, 0, total)
+
+    // Append all readings
+    for _, readings := range readingsMap {
+        flattened = append(flattened, readings...)
+    }
+
+    return flattened
+}
+

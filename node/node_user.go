@@ -3,7 +3,6 @@ package node
 import (
 	"strings"
 	"sync"
-	"time"
 	"distributed_system/format"
 	"distributed_system/models"
 	"distributed_system/utils"
@@ -14,23 +13,32 @@ import (
 // UserNode represents a user in the system
 type UserNode struct {
 	BaseNode
-	// store           *storage.DataStore
-	predictionModel    string
-	predictionWindow   time.Duration
-	predictionInterval time.Duration
+	predictionFunc	   func (values []float32, decay float32) float32
+	decayFactor	   float32 		       // Decay factor in some prediction functions
 	lastPrediction     *float32                    // pointer to allow nil value at start
 	recentReadings     map[string][]models.Reading // FIFO queue per sender
-	verifiedItemIDs    map[string][]string        // Tracks the verified item for each sender by their ID
+	verifiedItemIDs    map[string][]string         // Tracks the verified item for each sender by their ID
 	mutex		   sync.Mutex
 }
 
 // NewUserNode creates a new user node
-func NewUserNode(id string, model string, window time.Duration) *UserNode {
+func NewUserNode(id string, model string) *UserNode {
+
+	// Set the prediction function based on the model type
+	var predFunction func (values []float32, decay float32) float32
+	var decayFactor float32 = 0.0
+	if model == "exp" {
+		predFunction = models.DecayedWeightedMean
+		decayFactor = utils.DECAY_FACTOR
+	} else {
+		predFunction = models.LinearMean
+		decayFactor = 0.0
+	}
+
 	return &UserNode{
 		BaseNode:           NewBaseNode(id, "user"),
-		predictionModel:    model,
-		predictionWindow:   window,
-		predictionInterval: 3 * time.Second, // Make new predictions hourly
+		predictionFunc:     predFunction,
+		decayFactor:        decayFactor,
 		lastPrediction:     nil,
 		recentReadings:     make(map[string][]models.Reading),
 		verifiedItemIDs:    make(map[string][]string),
@@ -41,9 +49,7 @@ func NewUserNode(id string, model string, window time.Duration) *UserNode {
 // Start begins the verifier's operation
 func (u *UserNode) Start() error {
 	format.Display(format.Format_d("node_user.go", "Start()", "Starting user node "+u.GetName()))
-
 	u.isRunning = true
-
 	return nil
 }
 
@@ -176,6 +182,14 @@ func (n *UserNode) printDatabase() {
 			debug += "	" + r.ReadingID + " status:" + strconv.FormatBool(r.IsVerified) +"\n"
 		}
 	} 
+	flattenedReadings := models.FlattenReadings(n.recentReadings)
+	var readingValues []float32 = make([]float32, len(flattenedReadings))
+	for i, reading := range flattenedReadings {
+		readingValues[i] = reading.Temperature
+	}
+	prediction := n.predictionFunc(readingValues, n.decayFactor)
+	debug += "Predicted value: " + strconv.FormatFloat(float64(prediction), 'f', -1, 32) + "\n"
 	n.mutex.Unlock()
 	format.Display(format.Format_e(n.GetName(), "handleLockRelease()", debug))
+
 }

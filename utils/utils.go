@@ -1,6 +1,7 @@
 package utils
 
 const VALUES_TO_STORE = 15 // per sensor
+const DECAY_FACTOR = 0.9 // used in Users prediction
 
 func Synchronise(x int, y int) int {
 	return max(x, y) + 1
