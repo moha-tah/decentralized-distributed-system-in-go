@@ -8,8 +8,9 @@ import (
 // Reading represents a temperature reading from a sensor
 type Reading struct {
     ReadingID        string    `json:"reading_id"`
-    Temperature      float64   `json:"temperature"`
+    Temperature      float32   `json:"temperature"`
     Timestamp        time.Time `json:"timestamp"`
+	Clock	     int       // prefer clock instead of timestamp
     SensorID         string    `json:"sensor_id"`
     Location         string    `json:"location"`
     IsVerified       bool      `json:"is_verified"`
@@ -29,9 +30,9 @@ func GetDayIDFromTime(t time.Time) string {
 
 // WeatherPrediction represents a forecast for future temperature
 type WeatherPrediction struct {
-    PredictedTemperature float64   `json:"predicted_temperature"`
+    PredictedTemperature float32   `json:"predicted_temperature"`
     PredictionTime       time.Time `json:"prediction_time"`
-    Confidence           float64   `json:"confidence"`
+    Confidence           float32   `json:"confidence"`
     VerifiedReadings     int       `json:"verified_readings"`
     UnverifiedReadings   int       `json:"unverified_readings"`
     TotalReadings        int       `json:"total_readings"`

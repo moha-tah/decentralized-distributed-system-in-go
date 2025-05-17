@@ -13,11 +13,11 @@ import (
 type SensorNode struct {
 	BaseNode
 	readInterval time.Duration
-	errorRate    float64
+	errorRate    float32
 }
 
 // NewSensorNode creates a new sensor node
-func NewSensorNode(id string, interval time.Duration, errorRate float64) *SensorNode {
+func NewSensorNode(id string, interval time.Duration, errorRate float32) *SensorNode {
     return &SensorNode{
         BaseNode:     NewBaseNode(id, "sensor"),
         readInterval: interval,
@@ -52,7 +52,7 @@ func (s *SensorNode) Start() error {
 				"destination", "applications",
 				"clk", strconv.Itoa(s.clock),
 				"content_type", "sensor_reading",
-				"content_value", strconv.FormatFloat(reading.Temperature, 'f', -1, 32)))
+				"content_value", strconv.FormatFloat(float64(reading.Temperature), 'f', -1, 32)))
 
 		if s.ctrlLayer.SendApplicationMsg(msg) == nil { // no error => message has been sent
 			s.nbMsgSent = s.nbMsgSent + 1
@@ -66,22 +66,22 @@ func (s *SensorNode) Start() error {
 // generateReading produces a simulated temperature reading
 func (s *SensorNode) generateReading() models.Reading {
     // Generate a base realistic temperature (here, between 15°C and 30°C)
-    baseTemp := 15.0 + rand.Float64()*15.0
+    baseTemp := 15.0 + rand.Float32()*15.0
     
     // Sometimes introduce errors based on errorRate
-    if rand.Float64() < s.errorRate {
+    if rand.Float32() < s.errorRate {
         // Generate an erroneous reading (very high or very low)
-        if rand.Float64() < 0.5 {
+        if rand.Float32() < 0.5 {
             // Abnormally high
-            baseTemp = baseTemp + 50.0 + rand.Float64()*100.0
+            baseTemp = baseTemp + 50.0 + rand.Float32()*100.0
         } else {
             // Abnormally low
-            baseTemp = baseTemp - 50.0 - rand.Float64()*100.0
+            baseTemp = baseTemp - 50.0 - rand.Float32()*100.0
         }
     }
     
     // Add some minor natural variation
-    temperature := baseTemp + (rand.Float64() - 0.5) * 2.0
+    temperature := baseTemp + (rand.Float32() - 0.5) * 2.0
     
     return models.Reading{
         // ReadingID:   s.GenerateUniqueMessageID(),

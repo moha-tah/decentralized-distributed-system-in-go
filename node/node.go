@@ -1,6 +1,8 @@
 package node
 
-import "strconv"
+import (
+	"strconv"
+)
 
 // Node defines the interface for all node types in the system
 type Node interface {
@@ -23,7 +25,7 @@ type Node interface {
 	GetName() string
 
 	// SetControlLayer is used to transmit information to other nodes
-	SetControlLayer(ControlLayer) error
+	SetControlLayer(*ControlLayer) error
 
 }
 
@@ -33,7 +35,7 @@ type BaseNode struct {
 	nodeType  	string
 	isRunning 	bool
 	clock     	int	
-	ctrlLayer 	ControlLayer
+	ctrlLayer 	*ControlLayer
 	nbMsgSent	int
 }
 
@@ -68,7 +70,7 @@ func (n *BaseNode) GetName() string {
 	return n.nodeType + " (" + n.id + ")"
 }
 
-func (n *BaseNode) SetControlLayer(c ControlLayer) error {
+func (n *BaseNode) SetControlLayer(c *ControlLayer) error {
 	n.ctrlLayer = c 
 	return nil
 }

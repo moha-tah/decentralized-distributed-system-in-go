@@ -8,10 +8,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"sync"
 )
 
 type ControlLayer struct {
-	// mu   	  sync.RWMutex
+	mu   	  sync.RWMutex
 	id        string
 	nodeType  string
 	isRunning bool
@@ -57,7 +58,7 @@ func (c *ControlLayer) Start() error {
 	format.Display(format.Format_d("Start()", "control_layer.go", "Starting control layer "+c.GetName()))
 
 	// Notify child that this is its control layer it must talk to.
-	c.child.SetControlLayer(*c)
+	c.child.SetControlLayer(c)
 
 	// TODO idea to know how many nodes exists:
 	// We can not send the pear discovery message RIGHT AT startup: other nodes won't be
@@ -120,7 +121,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	if !strings.Contains(msg, "pear_discovery") {
 		// Only print to stderr msg that are not related to pear_discovery
 		// (overwhelming)
-		format.Display(format.Format_w(c.GetName(), "HandleMsg()", "Received: "+msg))
+		// format.Display(format.Format_w(c.GetName(), "HandleMsg()", "Received: "+msg))
 	}
 
 	// Update Lamport clock based on received message
@@ -146,26 +147,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			// Send to child app
 			// c.child.HandleMessage(msg)
 			c.channel_to_application <- msg // through channel
-
-			format.Display(format.Format_d(
-				c.GetName(), "HandleMessage()",
-				c.GetName()+" received the new reading <"+msg_content_value+">"))
-
-			propagate_msg = true
-		}
-
-		if propagate_msg { // propagate to applications
-			// TODO: is it appropriate to do it that way?
-			// msg is comming from a distant app layer, and we need
-			// to propagate to other distant apps, so we use the below
-			// function, even though is was thought as a function
-			// that does localapp => send to other. It can be used as both.
-
-			// As it is a propagation, use the same msg_id as in received msg:
-			var msg_id string = format.Findval(msg, "id", c.GetName())
-
-			c.SendControlMsg(msg_content_value, format.Findval(msg, "content_type", c.GetName()), 
-				msg_type, msg_destination, msg_id, sender_name_source)
+			propagate_msg = true // Propagation is done after the `if msg_destination`
 		}
 
 	} else if msg_destination == "control" {
@@ -204,7 +186,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				c.knownSiteNames = strings.SplitN(names_in_message, "@", -1)
 				c.nbOfKnownSites = len(c.knownSiteNames)
 
-				format.Display(format.Format_e(c.GetName(), "HandleMsg()", "Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
+				format.Display(format.Format_g(c.GetName(), "HandleMsg()", "Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
 
 				// Propagate answer to other
 				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
@@ -230,6 +212,17 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				c.nbOfKnownSites += 1
 			}
 		}
+	} else if msg_destination == "verifiers" && c.child.Type() == "verifier" {
+		// The msg is for the child app layer (which is a verifier)
+		// Send to child app through channel 
+		c.channel_to_application <- msg
+		// Propagate to other verifiers
+		propagate_msg = true
+	} else if msg_destination == c.child.GetName() {
+		// The msg is directly for the child app layer
+		// Send to child app through channel
+		c.channel_to_application <- msg
+
 	} else {
 		switch msg_type {
 		case "pear_discovery_answer":
@@ -244,7 +237,26 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			var propagation_message string = format.Replaceval(msg, "sender_name", c.GetName())
 			c.SendMsg(propagation_message)
 
+		case "lock_release_and_verified_value":
+			// This type of message if from verifier, to verifier and also users
+			// as is contains the verified value. For verifier, it would have
+			// entered above (case dest=verifier). And for user it is done here:
+			if c.child.Type() == "user" {
+				// Send to child app through channel 
+				c.channel_to_application <- msg
+				// Propagate to other verifiers
+				propagate_msg = true
+			}
 		}
+	}
+
+
+	// Propagate the message to other nodes if needed
+	if propagate_msg { 
+		// As it is a propagation, use the same msg_id as in received msg:
+		var msg_id string = format.Findval(msg, "id", c.GetName())
+		c.SendControlMsg(msg_content_value, format.Findval(msg, "content_type", c.GetName()), 
+			msg_type, msg_destination, msg_id, sender_name_source)
 	}
 
 	return nil
@@ -257,7 +269,10 @@ func (c *ControlLayer) AddNewMessageId(sender_name string, MID_str string) {
 	if err != nil {
 		format.Display(format.Format_e("AddNewMessageID()", c.GetName(), "Error in message id: " + err.Error()))
 	}
+	
+	c.mu.Lock()
 	c.IDWatcher.AddMIDToNode(sender_name, msg_NbMessageSent)
+	c.mu.Unlock()
 }
 
 // SendMsgFromApplication is the portal between control layer and application
@@ -370,10 +385,13 @@ func (c *ControlLayer) SawThatMessageBefore(msg string) bool {
 	var sender_name string = format.Findval(msg, "sender_name_source", c.GetName())
 
 	// Never saw that message before
+	c.mu.Lock()
 	if c.IDWatcher.ContainsMID(sender_name, msg_NbMessageSent) == false {
 		c.IDWatcher.AddMIDToNode(sender_name, msg_NbMessageSent)
+		c.mu.Unlock()
 		return false
 	}
+	c.mu.Unlock()
 	// Saw that message before as it is contained in intervals:
 	return true
 }

@@ -23,7 +23,7 @@ func main() {
 		// node.Sensor(node_name)
 
 		interval := time.Duration(2) * time.Second
-		errorRate := 0.1
+		errorRate := float32(0.1)
 
 		child_node = node.NewSensorNode(*node_id, interval, errorRate)
 	case "verifier":

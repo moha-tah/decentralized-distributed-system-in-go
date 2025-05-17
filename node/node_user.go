@@ -1,11 +1,11 @@
 package node
 
 import (
+	"strings"
+	"sync"
 	"time"
-	// "bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
-	// "os"    // Use for the bufio reader: reads from os stdin
-	//  "strings"
 	"distributed_system/format"
+	"distributed_system/models"
 	"distributed_system/utils"
 	"log" // Added for logging errors
 	"strconv"
@@ -18,8 +18,10 @@ type UserNode struct {
 	predictionModel    string
 	predictionWindow   time.Duration
 	predictionInterval time.Duration
-	lastPrediction     *float32             // pointer to allow nil value at start
-	recentReadings     map[string][]float32 // FIFO queue per sender
+	lastPrediction     *float32                    // pointer to allow nil value at start
+	recentReadings     map[string][]models.Reading // FIFO queue per sender
+	verifiedItemIDs    map[string][]string        // Tracks the verified item for each sender by their ID
+	mutex		   sync.Mutex
 }
 
 // NewUserNode creates a new user node
@@ -30,7 +32,9 @@ func NewUserNode(id string, model string, window time.Duration) *UserNode {
 		predictionWindow:   window,
 		predictionInterval: 3 * time.Second, // Make new predictions hourly
 		lastPrediction:     nil,
-		recentReadings:     make(map[string][]float32),
+		recentReadings:     make(map[string][]models.Reading),
+		verifiedItemIDs:    make(map[string][]string),
+		mutex: 		    sync.Mutex{},
 	}
 }
 
@@ -51,7 +55,10 @@ func (u *UserNode) HandleMessage(channel chan string) {
 
 		// Update Lamport clock based on received message
 		msg_clock_int, _ := strconv.Atoi(msg_clock)
+
+		u.mutex.Lock()
 		u.clock = utils.Synchronise(u.clock, msg_clock_int)
+		u.mutex.Unlock()
 
 		var msg_type string = format.Findval(msg, "type", u.GetName())
 		var msg_content_value string = format.Findval(msg, "content_value", u.GetName())
@@ -73,22 +80,102 @@ func (u *UserNode) HandleMessage(channel chan string) {
 			}
 
 			// Get or create the queue for the sender
+			u.mutex.Lock()
 			queue, exists := u.recentReadings[msg_sender]
 			if !exists {
-				queue = make([]float32, 0, utils.VALUES_TO_STORE)
+				queue = make([]models.Reading, 0, utils.VALUES_TO_STORE)
 			}
 
 			// Add to FIFO queue for this sender
 			if len(queue) >= utils.VALUES_TO_STORE {
+
+				// Remove all occurrences of the readingID from the verifiedItemIDs map
+				for senderID, itemIDs := range u.verifiedItemIDs {
+					u.verifiedItemIDs[senderID] = utils.RemoveAllOccurrencesString(itemIDs, queue[0].ReadingID)
+					}
+
 				// Remove the oldest element (slice trick)
 				queue = queue[1:]
 			}
-			queue = append(queue, float32(readingVal))
+			queue = append(queue, models.Reading{
+				ReadingID: msg_sender + "_" + msg_clock,
+				Temperature: float32(readingVal),
+				Clock:   msg_clock_int,
+				SensorID:    msg_sender,
+				IsVerified:  false,
+			})
 			u.recentReadings[msg_sender] = queue // Update the map
+			u.mutex.Unlock()
 
-			// Optional: Log the current queue state for debugging
-			log.Printf("%s: Current readings queue for %s: %v", u.GetName(), msg_sender, queue)
+			u.printDatabase()
+		case "lock_release_and_verified_value":
+			go u.handleLockRelease(msg)
 		}
 
 	}
+}
+
+// handleLockRelease processes a lock release message from a verifier
+// which also contains the verified value.
+func (n *UserNode) handleLockRelease(msg string) {
+	// Extract information from the message
+	itemID := format.Findval(msg, "item_id", n.GetName())
+	sensorID := strings.Split(itemID, "_")[0]
+	verifier := format.Findval(msg, "sender_name_source", n.GetName())
+	verifiedValueStr := format.Findval(msg, "content_value", n.GetName())
+	verifiedValue, err := strconv.ParseFloat(verifiedValueStr, 32)
+	if err != nil {
+		format.Display(format.Format_e(n.GetName(), "handleLockRelease()", "Error parsing verified value: "+verifiedValueStr))
+		return
+	}
+
+	n.mutex.Lock()
+
+	// By the time the verification is done, the item might have been gone (erased 
+	// because new readings were received). If it is the case (ie. the itemID don't 
+	// exists anymore), no need to update the verifiedItemIDs nor recentReadings:
+	isItemInReadings := false 
+	readingIndex := -1
+	for i, reading := range n.recentReadings[sensorID] {
+		if reading.ReadingID == itemID {
+			isItemInReadings = true 
+			readingIndex = i
+			break
+		}
+	}
+	if isItemInReadings == false {
+		n.mutex.Unlock()
+		return
+	}
+
+	// Update the verified item list for this sender
+	if _, exists := n.verifiedItemIDs[sensorID]; exists {
+		n.verifiedItemIDs[sensorID] = append(n.verifiedItemIDs[sensorID], itemID)
+	} else {
+		n.verifiedItemIDs[sensorID] = make([]string, 0)
+		n.verifiedItemIDs[sensorID] = append(n.verifiedItemIDs[sensorID], itemID)
+	}
+	n.mutex.Unlock()
+
+	// Update verified value:
+	n.mutex.Lock()
+	n.recentReadings[sensorID][readingIndex].IsVerified = true
+	n.recentReadings[sensorID][readingIndex].Temperature = float32(verifiedValue)
+	n.recentReadings[sensorID][readingIndex].VerifierID = verifier
+	n.mutex.Unlock()
+	n.printDatabase()
+}
+
+
+func (n *UserNode) printDatabase() {
+	var debug string = n.GetName()+" database:\n"
+	n.mutex.Lock()
+	for sensor, readings := range n.recentReadings {
+		debug += sensor + "\n"
+		for _, r := range readings {
+			debug += "	" + r.ReadingID + " status:" + strconv.FormatBool(r.IsVerified) +"\n"
+		}
+	} 
+	n.mutex.Unlock()
+	format.Display(format.Format_e(n.GetName(), "handleLockRelease()", debug))
 }
