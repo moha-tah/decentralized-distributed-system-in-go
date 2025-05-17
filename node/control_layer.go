@@ -5,10 +5,11 @@ import (
 	"distributed_system/format"
 	"distributed_system/utils"
 	"os" // Use for the bufio reader: reads from os stdin
+	"slices"
 	"strconv"
 	"strings"
-	"time"
 	"sync"
+	"time"
 )
 
 type ControlLayer struct {
@@ -26,6 +27,7 @@ type ControlLayer struct {
 
 	nbOfKnownSites       int
 	knownSiteNames       []string
+	knownVerifierNames   []string 
 	sentDiscoveryMessage bool // To send its name only once
 	pearDiscoverySealed  bool
 }
@@ -46,10 +48,12 @@ func NewControlLayer(id string, child Node) *ControlLayer {
 		child:	   child,
 		nbMsgSent: 0,
 		IDWatcher:  utils.NewMIDWatcher(),
-		channel_to_application: make(chan string),
+		channel_to_application: make(chan string, 10), // Buffered channel
 		nbOfKnownSites: 0, 
 		sentDiscoveryMessage: false,
 		pearDiscoverySealed: false,
+		knownSiteNames: make([]string, 0),
+		knownVerifierNames: make([]string, 0),
     }
 }
 
@@ -60,7 +64,10 @@ func (c *ControlLayer) Start() error {
 	// Notify child that this is its control layer it must talk to.
 	c.child.SetControlLayer(c)
 
-	// TODO idea to know how many nodes exists:
+	// Msg to application will be send through channel
+	go c.child.HandleMessage(c.channel_to_application) 
+	
+	// Idea to know how many nodes exists:
 	// We can not send the pear discovery message RIGHT AT startup: other nodes won't be
 	// created yet, at the network_ring.sh script creates nodes one after the other. So
 	// the idea is to wait 1 seconds (which is much, 0,1s should be enough) for all the nodes
@@ -77,7 +84,6 @@ func (c *ControlLayer) Start() error {
 
 			// Start the child only after
 			c.child.Start()
-			go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
 		}()
 	} else {
 		go func() { // Wake up child only after pear discovery is finished
@@ -85,7 +91,6 @@ func (c *ControlLayer) Start() error {
 
 			// Notify the child that its control layer has been created
 			c.child.Start()
-			go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
 		}()
 	}
 
@@ -106,6 +111,7 @@ func (c *ControlLayer) Start() error {
 			c.HandleMessage(rcvmsg)
 		}
 	}()
+
 	select {}
 }
 
@@ -114,9 +120,8 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	// Make sure we never saw this message before.
 	// It might happen eg. in a bidirectionnal ring 
 	if c.SawThatMessageBefore(msg) {
-
 		return nil
-	}
+	} 
 
 	if !strings.Contains(msg, "pear_discovery") {
 		// Only print to stderr msg that are not related to pear_discovery
@@ -127,15 +132,18 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	// Update Lamport clock based on received message
 	var msg_clock string = format.Findval(msg, "clk", c.GetName())
 	msg_clock_int, _ := strconv.Atoi(msg_clock)
+
+	c.mu.Lock()
 	c.clock = utils.Synchronise(c.clock, msg_clock_int)
+	c.mu.Unlock()
 
 	// Extract msg caracteristics
 	var msg_destination string = format.Findval(msg, "destination", c.GetName())
 	var msg_type string = format.Findval(msg, "type", c.GetName())
-	var msg_content_value string = format.Findval(msg, "content_value", c.GetName())
+	// var msg_content_value string = format.Findval(msg, "content_value", c.GetName())
 	// Original Sender: (used in IDWatcher to check if a msg from this node has already
 	// been received)
-	var sender_name_source string = format.Findval(msg, "sender_name_source", c.GetName())
+	// var sender_name_source string = format.Findval(msg, "sender_name_source", c.GetName())
 
 	// Will be used at the end to check if
 	// control layer needs to resend the message to all other nodes
@@ -146,7 +154,9 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		case "new_reading":
 			// Send to child app
 			// c.child.HandleMessage(msg)
-			c.channel_to_application <- msg // through channel
+			if c.child.Type() != "sensor" {
+				c.SendMsg(msg, true) // through channel
+			}
 			propagate_msg = true // Propagation is done after the `if msg_destination`
 		}
 
@@ -162,17 +172,29 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				// to c.sentDiscoveryMessage. The initiator of pear discovery won't send
 				// its name to itself.
 				// 🔥 Modify pear_discovery_answer if the bool is not used anymore.
-				c.SendControlMsg(c.GetName(), "siteName", "pear_discovery_answer",
-					// Destination = source written in content_value
+
+				answer := c.GetName()
+				// If child is verifier, need to send the name to the PearD responsible,
+				// as all verifiers must know the name of the other verifiers.
+				if c.child.Type() == "verifier" {
+					answer += utils.PearD_VERIFIER_SEPARATOR + c.child.GetName()
+				}
+
+				c.SendControlMsg(
+					// Content of the message:
+					answer,
+					// Content type and msg type:
+					"siteName", "pear_discovery_answer", 
+					// Destination = source written in content_value:
 					format.Findval(msg, "content_value", c.GetName()), 
+					// Msg ID and source: 
 					"", c.GetName())
 
 				// Then propagate the pear_discovery
-				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
-				c.SendMsg(propagate_msg)
+				var propagated_msg string = format.Replaceval(msg, "sender_name", c.GetName())
+				c.SendMsg(propagated_msg)
 
 				c.sentDiscoveryMessage = true
-
 			}
 		case "pear_discovery_sealing":
 
@@ -183,8 +205,42 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				// the number of known nodes, even for the node 0.
 				var names_in_message string = format.Findval(msg, "content_value", c.GetName())
 
-				c.knownSiteNames = strings.SplitN(names_in_message, "@", -1)
+				// for each site, retrieve its name and verifier name (if applicable):
+				sites_verifiers_parts := strings.Split(names_in_message, utils.PearD_VERIFIER_SEPARATOR)
+				sites_parts := strings.Split(sites_verifiers_parts[0], utils.PearD_SITE_SEPARATOR)
+				
+				c.mu.Lock()
+				for _, site := range sites_parts {
+					c.knownSiteNames = append(c.knownSiteNames, site)
+				}
+				if len(sites_verifiers_parts) > 1 {
+					verifiers_parts := sites_verifiers_parts[1]
+					verifiers := strings.Split(verifiers_parts, utils.PearD_SITE_SEPARATOR)
+					c.knownVerifierNames = append(c.knownVerifierNames, verifiers...)
+				}
 				c.nbOfKnownSites = len(c.knownSiteNames)
+				c.mu.Unlock()
+
+				// If any verifier name, send it to verifier chile (if it is a verifier)
+				if c.child.Type() == "verifier" {
+					
+					c.mu.Lock()
+					clk := c.clock
+					c.mu.Unlock()
+
+					// Send to child app through channel 
+					msg_to_verifier := format.Msg_format_multi(format.Build_msg_args(
+						"id", format.Findval(msg, "id", c.GetName()),
+						"type", "pear_discovery_verifier",
+						"sender_name_source", c.GetName(),
+						"sender_name", c.GetName(),
+						"sender_type", "control",
+						"destination", c.child.GetName(),
+						"content_type", "siteNames",
+						"content_value", strings.Join(c.knownVerifierNames, utils.PearD_SITE_SEPARATOR),
+						"clk", strconv.Itoa(clk)))
+					c.SendMsg(msg_to_verifier, true) // through channel
+				}
 
 				format.Display(format.Format_g(c.GetName(), "HandleMsg()", "Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
 
@@ -201,27 +257,42 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			// lines, as direct messaging only target this node in pear discovery process.
 			var newSiteName string = format.Findval(msg, "content_value", c.GetName())
 
+			// Extract the verifier name (if applicable):
+			var verifierName string = ""
+			var siteName string = ""
+			if strings.Contains(newSiteName, utils.PearD_VERIFIER_SEPARATOR) {
+				// Split the verifier name from the site name 
+				parts := strings.Split(newSiteName, utils.PearD_VERIFIER_SEPARATOR)
+				verifierName = parts[1]
+				siteName = parts[0]
+			} else {
+				// No verifier name, only the site name 
+				siteName = newSiteName
+			}
+
+
 			// Check if not already in known sites list. Will happend because of answer
 			// message propagation (see case below) (which is a mandatory feature
 			// -to bring message all the way to node 0- not a problem)
-			if !strings.Contains(
-				strings.Join(c.knownSiteNames, "@"), // main string in which to check
-				newSiteName,                         // site name checked
-			) {
-				c.knownSiteNames = append(c.knownSiteNames, newSiteName)
+			if !slices.Contains(c.knownSiteNames, siteName) {
+				c.knownSiteNames = append(c.knownSiteNames, siteName)
 				c.nbOfKnownSites += 1
+			} 
+			if verifierName != "" && !slices.Contains(c.knownVerifierNames, verifierName) {
+				c.knownVerifierNames = append(c.knownVerifierNames, verifierName)
 			}
+
 		}
 	} else if msg_destination == "verifiers" && c.child.Type() == "verifier" {
 		// The msg is for the child app layer (which is a verifier)
 		// Send to child app through channel 
-		c.channel_to_application <- msg
+		c.SendMsg(msg, true) // through channel
 		// Propagate to other verifiers
 		propagate_msg = true
 	} else if msg_destination == c.child.GetName() {
 		// The msg is directly for the child app layer
 		// Send to child app through channel
-		c.channel_to_application <- msg
+		c.SendMsg(msg, true) // through channel
 
 	} else {
 		switch msg_type {
@@ -243,7 +314,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			// entered above (case dest=verifier). And for user it is done here:
 			if c.child.Type() == "user" {
 				// Send to child app through channel 
-				c.channel_to_application <- msg
+				c.SendMsg(msg, true) // through channel
 				// Propagate to other verifiers
 				propagate_msg = true
 			}
@@ -253,10 +324,11 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 
 	// Propagate the message to other nodes if needed
 	if propagate_msg { 
-		// As it is a propagation, use the same msg_id as in received msg:
-		var msg_id string = format.Findval(msg, "id", c.GetName())
-		c.SendControlMsg(msg_content_value, format.Findval(msg, "content_type", c.GetName()), 
-			msg_type, msg_destination, msg_id, sender_name_source)
+		// As it is a propagation, use the same msg_id as in received msg 
+		// so no id modification.
+		propagate_msg := format.Replaceval(msg, "sender_name", c.GetName())
+		propagate_msg = format.Replaceval(msg, "sender_type", "control")
+		c.SendMsg(propagate_msg)
 	}
 
 	return nil
@@ -284,7 +356,9 @@ func (c *ControlLayer) SendApplicationMsg(msg string) error {
 	var rcv_clk string = format.Findval(msg, "clk", c.GetName())
 	rcv_clk_int, _ := strconv.Atoi(rcv_clk)
 
+	c.mu.Lock()
 	c.clock = utils.Synchronise(c.clock, rcv_clk_int)
+	c.mu.Unlock()
 
 	c.SendMsg(msg)
 
@@ -320,8 +394,15 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 	return nil
 }
 
-// Sending action
-func (c *ControlLayer) SendMsg(msg string) {
+// SendMsg sends a message to the network.
+// Param through_channel is used to indicate if the message 
+// should be sent through the channel to the application layer ONLY (ie.
+// not to the network).
+func (c *ControlLayer) SendMsg(msg string, through_channelArgs... bool) {
+	through_channel := false
+	if len(through_channelArgs) > 0 {
+		through_channel = through_channelArgs[0]
+	}
 
 	// As this node sends the message, it doens't want to receive 
 	// a duplicate => add the message ID to ID watcher
@@ -332,12 +413,28 @@ func (c *ControlLayer) SendMsg(msg string) {
 	var msg_sender string = format.Findval(msg, "sender_name_source", c.GetName())
 	c.AddNewMessageId(msg_sender, msg_NbMessageSent_str)
 
+	c.mu.Lock()
 	c.clock = c.clock + 1
+	c.mu.Unlock()
 
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clock))
-	format.Msg_send(msg, c.GetName())
 
+	if through_channel {
+		select {
+		    case c.channel_to_application <- msg:
+			// Message sent successfully
+		    case <-time.After(100 * time.Millisecond):
+			format.Display(format.Format_w(c.GetName(), "SendMsg()", "Channel appears to be blocked"))
+		}
+		// Send through channel only, ie. not to the network
+		// c.channel_to_application <- msg
+	} else {
+		format.Msg_send(msg, c.GetName())
+	}
+
+	c.mu.Lock()
 	c.nbMsgSent = c.nbMsgSent + 1
+	c.mu.Unlock()
 
 }
 
@@ -359,12 +456,19 @@ func (c *ControlLayer) ClosePearDiscovery() {
 	// as it did not received its own name.
 	c.knownSiteNames = append(c.knownSiteNames, c.GetName())
 	c.nbOfKnownSites += 1
+	if c.child.Type() == "verifier" {
+		c.knownVerifierNames = append(c.knownVerifierNames, c.child.GetName())
+	}
+	
+	msg_content := strings.Join(c.knownSiteNames, utils.PearD_SITE_SEPARATOR)
+	if len(c.knownVerifierNames) > 0 {
+		msg_content += utils.PearD_VERIFIER_SEPARATOR + strings.Join(c.knownVerifierNames, utils.PearD_SITE_SEPARATOR)
+	}
 	
 	// Display update nb of site as all other nodes will do when receiving:
 	format.Display(format.Format_e(c.GetName(), "ClosePearDis()", "Updated nb sites to " + strconv.Itoa(c.nbOfKnownSites)))
 
-	c.SendControlMsg(strings.Join(c.knownSiteNames, "@"), 
-		"siteNames", "pear_discovery_sealing", "control", "", c.GetName())
+	c.SendControlMsg(msg_content, "siteNames", "pear_discovery_sealing", "control", "", c.GetName())
 }
 
 // Return true if the message's ID is contained with 

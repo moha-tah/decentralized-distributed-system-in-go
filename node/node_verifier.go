@@ -56,9 +56,6 @@ func (v *VerifierNode) Start() error {
 
 	v.isRunning = true
 	
-	// Discover other verifiers in the network
-	go v.DiscoverOtherVerifiers()
-	
 	// Start a goroutine to periodically check for unverified items
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
@@ -80,7 +77,14 @@ func (v *VerifierNode) Start() error {
 				// more than the processing capacity.
 				if l_processing < processingCapacity { // Search for new only if not full already
 					go v.CheckUnverifiedItems()
-				} 
+				} else {
+					processingItemID := ""
+					for itemID := range v.processingItems {
+						processingItemID = itemID
+						break
+					}
+					format.Display(format.Format_d(v.GetName(), "Start()", "Already processing "+ processingItemID))
+				}
 			}
 		}
 		ticker.Stop()
@@ -91,6 +95,13 @@ func (v *VerifierNode) Start() error {
 
 // HandleMessage processes incoming messages from control app
 func (v *VerifierNode) HandleMessage(channel chan string) {
+	    defer func() {
+		if r := recover(); r != nil {
+			format.Display(format.Format_w(v.GetName(), "HandleMessage()", "Recovered from panic: "+fmt.Sprint(r)))
+		    // Optionally restart the message handling
+		    go v.HandleMessage(channel)
+		}
+	    }()
 
 	for msg := range channel {
 		var msg_clock string = format.Findval(msg, "clk", v.GetName())
@@ -134,7 +145,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 				queue = queue[1:]
 			}
 			queue = append(queue, models.Reading{
-				ReadingID: fmt.Sprintf("%s_%d", msg_sender, msg_clock_int),
+				ReadingID: format.Findval(msg, "item_id", v.GetName()),
 				Temperature: float32(readingVal),
 				Clock:   msg_clock_int,
 				SensorID:    msg_sender,
@@ -157,36 +168,27 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 		case "lock_acquired":
 			go v.handleLockAcquired(msg)
 
-		case "verifier_discovery":
-			// Add this verifier to our list of known verifiers
-			senderType := format.Findval(msg, "sender_type", v.GetName())
-			if senderType == "verifier" && msg_sender != v.GetName() {
-				v.mutex.Lock()
-				v.otherVerifiers[msg_sender] = true
-				v.mutex.Unlock()
-				
-				// Send a response to the new verifier
-				responseMsg := format.Msg_format_multi(
-					format.Build_msg_args(
-						"id", v.GenerateUniqueMessageID(),
-						"type", "verifier_discovery_response",
-						"sender_name_source", v.GetName(),
-						"sender_name", v.GetName(),
-						"sender_type", v.Type(),
-						"destination", msg_sender,
-						"clk", strconv.Itoa(v.clock)))
-				v.SendMessage(responseMsg)
+		case "pear_discovery_verifier":
+			// This message is recieved from our control layer and 
+			// contains the list of verifiers in the network.
+			site_names := strings.Split(msg_content_value, utils.PearD_SITE_SEPARATOR)
+			// Add each verifier to our list of known verifiers :
+			v.mutex.Lock()
+			for _, site_name := range site_names {
+				if site_name != v.GetName() {
+					v.otherVerifiers[site_name] = true
+					v.nbOfVerifiers++
+				}
 			}
-			
-		case "verifier_discovery_response":
-			// Add this verifier to our list of known verifiers
-			senderType := format.Findval(msg, "sender_type", v.GetName())
-			if senderType == "verifier" && msg_sender != v.GetName() {
-				v.mutex.Lock()
-				v.otherVerifiers[msg_sender] = true
-				v.nbOfVerifiers++
-				v.mutex.Unlock()
+			v.mutex.Unlock()
+
+			v.mutex.Lock()
+			debug := "Nb of verifiers: " + strconv.Itoa(v.nbOfVerifiers)
+			for key := range v.otherVerifiers {
+				debug += " " + key
 			}
+			v.mutex.Unlock()
+			format.Display(format.Format_g(v.GetName(), "HandleMessage()", debug))
 		}
 	}
 
@@ -265,10 +267,11 @@ func (v *VerifierNode) CheckUnverifiedItems() {
 }
 
 // chooseReadingToVerify selects a reading to verify from the pending items.
-// No logic needed for now => just return the first one
+// No logic needed for now => just return the last one (as Users
+// weight the most recent readings heavier).
 func (v *VerifierNode) chooseReadingToVerify() models.Reading {
 	v.mutex.Lock()
-	r := v.pendingItems[0]
+	r := v.pendingItems[len(v.pendingItems)-1] // Get the last item
 	v.mutex.Unlock()
 	return r
 }
@@ -608,6 +611,7 @@ func (v *VerifierNode) markItemAsVerified(itemID string, value float32, verifier
 	}
 	v.recentReadings[senderID][readingIndex].VerifierID = verifier
 	v.mutex.Unlock()
+	format.Display(format.Format_d(v.GetName(), "markItemAsVerified()", "Item "+itemID+" verified by "+verifier))
 }
 
 // releaseLock releases the lock on an item
@@ -690,27 +694,6 @@ func (v *VerifierNode) handleLockRelease(msg string) {
 	var verifier string = format.Findval(msg, "sender_name_source", v.GetName())
 	v.markItemAsVerified(itemID, float32(verifiedValue), verifier)
 }
-
-
-// DiscoverOtherVerifiers broadcasts a discovery message to find other verifiers
-func (v *VerifierNode) DiscoverOtherVerifiers() {
-	
-	// Broadcast discovery message
-	msg := format.Msg_format_multi(
-		format.Build_msg_args(
-			"id", v.GenerateUniqueMessageID(),
-			"type", "verifier_discovery",
-			"sender_name_source", v.GetName(),
-			"sender_name", v.GetName(),
-			"sender_type", v.Type(),
-			"destination", "verifiers",
-			"clk", "", //Change in SendMessage
-		))
-	
-	v.SendMessage(msg)
-}
-
-
 
 // ====================== MODEL `READING` LOGIC ======================
 // Helper function for using the `Reading` struct

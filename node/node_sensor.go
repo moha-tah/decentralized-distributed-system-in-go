@@ -2,11 +2,12 @@ package node
 
 import (
 	// "fmt"
-	"time"
-	"strconv"
-	"math/rand"
 	"distributed_system/format"
 	"distributed_system/models"
+	"fmt"
+	"math/rand"
+	"strconv"
+	"time"
 )
 
 // SensorNode represents a temperature sensor in the system
@@ -52,7 +53,8 @@ func (s *SensorNode) Start() error {
 				"destination", "applications",
 				"clk", strconv.Itoa(s.clock),
 				"content_type", "sensor_reading",
-				"content_value", strconv.FormatFloat(float64(reading.Temperature), 'f', -1, 32)))
+				"content_value", strconv.FormatFloat(float64(reading.Temperature), 'f', -1, 32),
+				"item_id", fmt.Sprintf("%s_%d", s.GetName(), s.clock)))
 
 		if s.ctrlLayer.SendApplicationMsg(msg) == nil { // no error => message has been sent
 			s.nbMsgSent = s.nbMsgSent + 1

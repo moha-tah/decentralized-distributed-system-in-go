@@ -48,7 +48,7 @@ func (wp WeatherPrediction) String() string {
     )
 }
 
-// FlattenReadings takes a map of sensor IDs to slices of readings and flattens 
+// FlattenReadings takes a map of ID to slices-of-readings and flattens 
 // it into a single slice of readings. This is useful for processing or displaying
 // all readings together.
 func FlattenReadings(readingsMap map[string][]Reading) []Reading {

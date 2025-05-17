@@ -17,6 +17,7 @@ type UserNode struct {
 	decayFactor	   float32 		       // Decay factor in some prediction functions
 	lastPrediction     *float32                    // pointer to allow nil value at start
 	recentReadings     map[string][]models.Reading // FIFO queue per sender
+	recentPredictions  map[string][]float32      	// FIFO queue per sender of made predictions
 	verifiedItemIDs    map[string][]string         // Tracks the verified item for each sender by their ID
 	mutex		   sync.Mutex
 }
@@ -41,6 +42,7 @@ func NewUserNode(id string, model string) *UserNode {
 		decayFactor:        decayFactor,
 		lastPrediction:     nil,
 		recentReadings:     make(map[string][]models.Reading),
+		recentPredictions:  make(map[string][]float32),
 		verifiedItemIDs:    make(map[string][]string),
 		mutex: 		    sync.Mutex{},
 	}
@@ -104,7 +106,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 				queue = queue[1:]
 			}
 			queue = append(queue, models.Reading{
-				ReadingID: msg_sender + "_" + msg_clock,
+				ReadingID: format.Findval(msg, "item_id", u.GetName()),
 				Temperature: float32(readingVal),
 				Clock:   msg_clock_int,
 				SensorID:    msg_sender,
@@ -113,7 +115,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 			u.recentReadings[msg_sender] = queue // Update the map
 			u.mutex.Unlock()
 
-			u.printDatabase()
+			u.processDatabse()
 		case "lock_release_and_verified_value":
 			go u.handleLockRelease(msg)
 		}
@@ -169,9 +171,41 @@ func (n *UserNode) handleLockRelease(msg string) {
 	n.recentReadings[sensorID][readingIndex].Temperature = float32(verifiedValue)
 	n.recentReadings[sensorID][readingIndex].VerifierID = verifier
 	n.mutex.Unlock()
-	n.printDatabase()
+	n.processDatabse()
 }
 
+
+func (n *UserNode) processDatabse() {
+
+	// One prediction per sensor: 
+	n.mutex.Lock()
+	recentReadings := n.recentReadings 
+	n.mutex.Unlock()
+	for sensor, readings := range recentReadings {
+		var readingValues []float32 = make([]float32, len(readings))
+		for _, r := range readings {
+			readingValues = append(readingValues, r.Temperature)
+		}
+		prediction := n.predictionFunc(readingValues, n.decayFactor)
+		// Get or create the queue for the sender
+
+		n.mutex.Lock()
+		queue, exists := n.recentPredictions[sensor]
+		if !exists {
+			queue = make([]float32, 0, utils.VALUES_TO_STORE)
+		}
+
+		// Add to FIFO queue for this sender
+		if len(queue) >= utils.VALUES_TO_STORE {
+			// Remove the oldest element (slice trick)
+			queue = queue[1:]
+		}
+		queue = append(queue, prediction)
+		n.recentPredictions[sensor] = queue // Update the map
+		n.mutex.Unlock()
+	}
+	n.printDatabase()
+}
 
 func (n *UserNode) printDatabase() {
 	var debug string = n.GetName()+" database:\n"
@@ -179,16 +213,17 @@ func (n *UserNode) printDatabase() {
 	for sensor, readings := range n.recentReadings {
 		debug += sensor + "\n"
 		for _, r := range readings {
-			debug += "	" + r.ReadingID + " status:" + strconv.FormatBool(r.IsVerified) +"\n"
+			debug += "	" + r.ReadingID + " status:" + strconv.FormatBool(r.IsVerified) + " verifier:" + r.VerifierID + "\n"
 		}
 	} 
-	flattenedReadings := models.FlattenReadings(n.recentReadings)
-	var readingValues []float32 = make([]float32, len(flattenedReadings))
-	for i, reading := range flattenedReadings {
-		readingValues[i] = reading.Temperature
+	
+	// Predictions 
+	for sensor, predictions := range n.recentPredictions {
+		prediction := predictions[len(predictions)-1] // Get the last prediction
+		debug += "Latest prediction for "+sensor+": " + strconv.FormatFloat(float64(prediction), 'f', -1, 32) + "\n"
 	}
-	prediction := n.predictionFunc(readingValues, n.decayFactor)
-	debug += "Predicted value: " + strconv.FormatFloat(float64(prediction), 'f', -1, 32) + "\n"
+
+
 	n.mutex.Unlock()
 	format.Display(format.Format_e(n.GetName(), "handleLockRelease()", debug))
 
