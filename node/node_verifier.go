@@ -168,6 +168,16 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 		case "lock_acquired":
 			go v.handleLockAcquired(msg)
 
+		case "lock_request_cancelled":
+			// Remove the lock request for this item 
+			itemID := format.Findval(msg, "item_id", v.GetName()) 
+			v.mutex.Lock() 
+			// Remove the lock request from our map 
+			delete(v.lockRequests, itemID) 
+			// Remove the lock replies for this item 
+			delete(v.lockReplies, itemID) 
+			v.mutex.Unlock()
+
 		case "pear_discovery_verifier":
 			// This message is recieved from our control layer and 
 			// contains the list of verifiers in the network.
@@ -449,8 +459,49 @@ func (v *VerifierNode) handleLockReply(msg string) {
 	if allReplied && canProcess {
 		go v.acquiredFullLockOnItem(itemID) // We can process the item
 
+	} else if allReplied && !canProcess {
+		go v.cancelLockRequest(itemID) // We can cancel the lock request 
 	}
 }
+
+
+// cancelLockRequest cancels the lock request for an item
+func (v *VerifierNode) cancelLockRequest(itemID string) {
+	v.mutex.Lock()
+	// Remove the lock request from our map
+	delete(v.lockRequests, itemID)
+	
+	// Remove the lock replies for this item
+	delete(v.lockReplies, itemID)
+	
+	// Remove the processing status for this item
+	delete(v.processingItems, itemID)
+	
+	// Remove the item from the pending items 
+	for i, item := range v.pendingItems {
+		if item.ReadingID == itemID {
+			v.pendingItems = slices.Delete(v.pendingItems, i, i+1)
+			break
+		}
+	}
+
+	v.mutex.Unlock()
+	
+	// Notify other verifiers that we are not processing this item anymore
+	msg := format.Msg_format_multi(
+		format.Build_msg_args(
+			"id", v.GenerateUniqueMessageID(),
+			"type", "lock_request_cancelled",
+			"sender_name", v.GetName(),
+			"sender_name_source", v.GetName(),
+			"sender_type", v.Type(),
+			"destination", "verifiers",
+			"clk", "",//Change in SendMessage
+			"item_id", itemID))
+	v.SendMessage(msg)
+}
+	
+
 
 // acquiredFullLockOnItem is called when the current node has full lock on an item,
 // meaning all other verifiers have granted the lock.
