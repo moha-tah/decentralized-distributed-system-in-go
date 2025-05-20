@@ -4,7 +4,9 @@ import (
 	"bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
 	"distributed_system/format"
 	"distributed_system/utils"
+	"encoding/csv"
 	"fmt"
+	"log"
 	"os" // Use for the bufio reader: reads from os stdin
 	"slices"
 	"strconv"
@@ -328,7 +330,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				return nil
 			}
 
-			format.Display(format.Format_d(c.GetName(), "HandleMessage()", "📥 snapshot_response reçu"))
+			format.Display(format.Format_d(c.GetName(), "HandleMessage()", "📥 snapshot_response reçu from "+sender_name_source))
 
 			// Mise à jour de l'horloge vectorielle locale
 			vcStr := format.Findval(msg, "vector_clock", c.GetName())
@@ -337,14 +339,17 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				format.Display(format.Format_e(c.GetName(), "HandleMessage()", "Erreur parsing vector_clock: "+err.Error()))
 				return nil
 			}
+			c.mu.Lock()
 			for i := 0; i < len(c.vectorClock); i++ {
 				c.vectorClock[i] = utils.Max(c.vectorClock[i], recvVC[i])
 			}
 			c.vectorClock[c.nodeIndex]++
+			c.mu.Unlock()
 
 			// Extraction des données du snapshot
-			sensorID := format.Findval(msg, "sender_name", c.GetName())
+			sensorID := format.Findval(msg, "sender_name_source", c.GetName())
 			valuesStr := format.Findval(msg, "content_value", c.GetName())
+			format.Display(format.Format_d(c.GetName(), "HandleMessage()", "Received snapshot from "+sensorID+" with values: "+valuesStr))
 			values := utils.ParseFloatArray(valuesStr)
 
 			// Enregistrement du snapshot
@@ -356,9 +361,12 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			c.mu.Unlock()
 
 			// Vérifie si tous les capteurs ont répondu
-			sensorNames := c.getSensorNames() // Fonction à ajouter : filtre les knownSiteNames pour ne garder que ceux qui commencent par "sensor"
-			if len(c.receivedSnapshots) == len(sensorNames) {
+			// sensorNames := c.getSensorNames() // Fonction à ajouter : filtre les knownSiteNames pour ne garder que ceux qui commencent par "sensor"
+			if len(c.receivedSnapshots) == len(c.knownSiteNames)-1 {
 				go c.CheckSnapshotCoherence() // méthode que tu dois avoir déjà codée
+			} else {
+				format.Display(format.Format_d(c.GetName(), "HandleMessage()", "Stil missing "+strconv.Itoa(len(c.knownSiteNames)-1-len(c.receivedSnapshots))+" sensors"))
+format.Display(format.Format_d(c.GetName(), "HandleMessage()", "Received snapshots: "+strconv.Itoa(len(c.receivedSnapshots))))
 			}
 		}
 
@@ -613,42 +621,45 @@ func (c *ControlLayer) RequestSnapshot() {
 	))
 
 	c.SendMsg(msg)
+	c.SendMsg(msg, true)
 }
 
+
+
 func (c *ControlLayer) CheckSnapshotCoherence() {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+
+	// Copie des données locales pour traitement sans verrou
+	snapshots := make(map[string]SnapshotData)
+	for id, snap := range c.receivedSnapshots {
+		if !strings.Contains(id, "control") {
+			snapshots[id] = snap
+		}
+	}
+	c.mu.Unlock()
 
 	ids := []string{}
-	for id := range c.receivedSnapshots {
+	for id := range snapshots {
 		ids = append(ids, id)
 	}
 
-	for i := 0; i < len(ids); i++ {
-		for j := 0; j < len(ids); j++ {
-			if i == j {
-				continue
-			}
-			vi := c.receivedSnapshots[ids[i]].VectorClock
-			vj := c.receivedSnapshots[ids[j]].VectorClock
+	// Cas trivial
+	if len(ids) <= 1 {
+		c.SaveSnapshotToCSVThreadSafe(snapshots)
+		return
+	}
 
-			// Test de cohérence
-			if !utils.VectorClockCompatible(vi, vj) {
-				format.Display(format.Format_e(
-					c.GetName(), "CheckSnapshotCoherence()",
-					"❌ Incohérence détectée entre "+ids[i]+" et "+ids[j],
-				))
+	// Vérifier compatibilité
+	for i := 0; i < len(ids); i++ {
+		for j := i + 1; j < len(ids); j++ {
+			if !utils.VectorClockCompatible(snapshots[ids[i]].VectorClock, snapshots[ids[j]].VectorClock) {
+				c.SaveSnapshotToCSVThreadSafe(snapshots)
 				return
 			}
 		}
 	}
 
-	format.Display(format.Format_d(
-		c.GetName(), "CheckSnapshotCoherence()",
-		"✅ Tous les snapshots sont cohérents !",
-	))
-	c.PrintSnapshotsTable()
-	c.SaveSnapshotToCSV()
+	c.SaveSnapshotToCSVThreadSafe(snapshots)
 }
 
 func (c *ControlLayer) getSensorNames() []string {
@@ -662,8 +673,8 @@ func (c *ControlLayer) getSensorNames() []string {
 }
 
 func (c *ControlLayer) PrintSnapshotsTable() {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	fmt.Println()
 	fmt.Println("📦  Snapshots reçus (" + strconv.Itoa(len(c.receivedSnapshots)) + " capteurs)")
@@ -685,8 +696,8 @@ func (c *ControlLayer) PrintSnapshotsTable() {
 }
 
 func (c *ControlLayer) SaveSnapshotToCSV() {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// Nom dynamique basé sur l’horloge Lamport du contrôleur
 	filename := fmt.Sprintf("snapshot_%d.csv", c.vectorClock[c.nodeIndex])
@@ -710,4 +721,26 @@ func (c *ControlLayer) SaveSnapshotToCSV() {
 	}
 
 	fmt.Printf("📁 État global sauvegardé dans %s\n", filename)
+}
+
+func (c *ControlLayer) SaveSnapshotToCSVThreadSafe(snapshots map[string]SnapshotData) {
+	file, err := os.Create("snapshot.csv")
+	if err != nil {
+		log.Println("Erreur création fichier snapshot:", err)
+		return
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	writer.Write([]string{"ID", "Vector Clock", "Values"})
+
+	for id, snap := range snapshots {
+		writer.Write([]string{
+			id,
+			utils.SerializeVectorClock(snap.VectorClock),
+			strings.Join(utils.Float32SliceToStringSlice(snap.Values), ";"),
+		})
+	}
 }

@@ -143,6 +143,49 @@ func (u *UserNode) HandleMessage(channel chan string) {
 			u.processDatabse()
 		case "lock_release_and_verified_value":
 			go u.handleLockRelease(msg)
+
+		
+		case "snapshot_request":
+			format.Display(format.Format_d(
+				u.GetName(), "HandleMessage()",
+				"📦 snapshot_request reçu"))
+
+			// Incrémenter horloge vectorielle
+			vcStr := format.Findval(msg, "vector_clock", u.GetName())
+			recvVC, err := utils.DeserializeVectorClock(vcStr)
+			if err == nil {
+				for i := 0; i < len(u.vectorClock); i++ {
+					u.vectorClock[i] = utils.Max(u.vectorClock[i], recvVC[i])
+				}
+				u.vectorClock[u.nodeIndex] += 1
+			}
+
+			// Créer la réponse avec horloge vectorielle uniquement
+			msgID := u.GenerateUniqueMessageID()
+			response := format.Msg_format_multi(format.Build_msg_args(
+				"id", msgID,
+				"type", "snapshot_response",
+				"sender_name", u.GetName(),
+				"sender_name_source", u.GetName(),
+				"sender_type", u.Type(),
+				"destination", format.Findval(msg, "sender_name_source", u.GetName()),
+				"clk", strconv.Itoa(u.clk),
+				"vector_clock", utils.SerializeVectorClock(u.vectorClock),
+				"content_type", "snapshot_data",
+				"content_value", "[]", // Empty for now
+			))
+
+			format.Display(format.Format_d(u.GetName(), "HandleMessage()", "Sending snapshot_response"))
+			if u.ctrlLayer.id != "0_control" {
+				u.ctrlLayer.SendApplicationMsg(response)
+			} else {
+				u.ctrlLayer.HandleMessage(response)
+			}
+
+			u.mu.Lock()
+			u.nbMsgSent++
+			u.mu.Unlock()
+
 		}
 
 	}

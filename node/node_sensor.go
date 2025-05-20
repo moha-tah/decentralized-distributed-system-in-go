@@ -193,7 +193,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 		case "snapshot_request":
 			format.Display(format.Format_d(
 				s.GetName(), "HandleMessage()",
-				"🔎 snapshot_request reçu depuis "))
+				"🔎 snapshot_request reçu depuis " + s.GetName()))
 
 			// 🧠 Lire les dernières valeurs stockées
 			s.mu.Lock()
@@ -204,7 +204,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 			s_VC := utils.SerializeVectorClock(s.vectorClock)
 			s_clk := strconv.Itoa(s.clk)
 			s.mu.Unlock()
-			readingsStr := "[" + strings.Join(readings, ", ") + "]"
+			readingsStr := "" + strings.Join(readings, ", ") + ""
 
 			// 📨 Création du message snapshot_response
 			originalRequester := format.Findval(msg, "sender_name", s.GetName())
@@ -218,6 +218,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 				"destination", format.Findval(msg, "sender_name_source", s.GetName()),
 				"vector_clock", s_VC,
 				"content_type", "snapshot_data",
+				"content_value", readingsStr,
 				"clk", s_clk,
 			))
 
@@ -225,7 +226,11 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 			// 🗂️ Log optionnel
 			format.Display(format.Format_d(s.GetName(), "HandleMessage()", "Sending snapshot_response: "+readingsStr))
 
-			s.ctrlLayer.SendApplicationMsg(msgResponse)
+			if s.ctrlLayer.id != "0_control" {
+				s.ctrlLayer.SendApplicationMsg(msgResponse)
+			} else {
+				s.ctrlLayer.HandleMessage(msgResponse)
+			}
 			// Envoi vers couche application
 			if s.ctrlLayer.SendApplicationMsg(msg) == nil {
 				s.mu.Lock()

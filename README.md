@@ -24,19 +24,14 @@ Build:
 go build main.go
 ```
 
-Then, to create a connection between a Sensor (which send a message every two seconds) and 
-a Verifier (which prints the received message): 
+Then, to create a network: 
 
 ```bash
-./main -node_type sensor | ./main -node_type verifier
+./network_ring.sh A:-node_type,sensor \ B:-node_type,verifier \ C:-node_type,sensor \ D:-node_type,user_exp \ E:-node_type,sensor \ F:-node_type,user_linear \ G:-node_type,verifie
 ```
 
-which produces:
-```bash
- + [Verifier_1 163913] main     : Verifier_1 received </=sender_name=Sensor 1/=clk=1>
- + [Verifier_1 163913] main     : Verifier_1 received </=sender_name=Sensor 1/=clk=2>
- + [Verifier_1 163913] main     : Verifier_1 received </=sender_name=Sensor 1/=clk=3>
-```
+The web views will be on http://localhost:8085/ and http://localhost:8083/ (one for each user node).
+
 
 The `main` program takes the arguments:
 

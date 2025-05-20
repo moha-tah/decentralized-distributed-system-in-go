@@ -178,6 +178,43 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			// Sauvegarde dans le fichier log
 			v.logReceivedReading(msg_sender, readingVal, stateCode)
 
+
+		
+		case "snapshot_request":
+			format.Display(format.Format_d(
+				v.GetName(), "HandleMessage()",
+				"📦 snapshot_request reçu"))
+
+			vcStr := format.Findval(msg, "vector_clock", v.GetName())
+			recvVC, err := utils.DeserializeVectorClock(vcStr)
+			if err == nil {
+				for i := 0; i < len(v.vectorClock); i++ {
+					v.vectorClock[i] = utils.Max(v.vectorClock[i], recvVC[i])
+				}
+				v.vectorClock[v.nodeIndex] += 1
+			}
+
+			// Créer la réponse avec l'horloge vectorielle uniquement
+			msgID := v.GenerateUniqueMessageID()
+			response := format.Msg_format_multi(format.Build_msg_args(
+				"id", msgID,
+				"type", "snapshot_response",
+				"sender_name", v.GetName(),
+				"sender_name_source", v.GetName(),
+				"sender_type", v.Type(),
+				"destination", format.Findval(msg, "sender_name_source", v.GetName()),
+				"clk", strconv.Itoa(v.clk),
+				"vector_clock", utils.SerializeVectorClock(v.vectorClock),
+				"content_type", "snapshot_data",
+				"content_value", "[]", // les verifieurs ne stockent pas de valeurs
+			))
+
+			format.Display(format.Format_d(v.GetName(), "HandleMessage()", "Sending snapshot_response"))
+			if v.ctrlLayer.id != "0_control" {
+				v.ctrlLayer.SendApplicationMsg(response)
+			} else {
+				v.ctrlLayer.HandleMessage(response)
+			}
 			
 		case "lock_request":
 			go v.handleLockRequest(msg)
