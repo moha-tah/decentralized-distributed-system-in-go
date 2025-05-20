@@ -7,14 +7,14 @@ import (
 
 // Reading represents a temperature reading from a sensor
 type Reading struct {
-    ReadingID        string    `json:"reading_id"`
-    Temperature      float32   `json:"temperature"`
+    ReadingID        string    `json:"ReadingID"`
+    Temperature      float32   `json:"Temperature"`
     Timestamp        time.Time `json:"timestamp"`
 	Clock	     int       // prefer clock instead of timestamp
     SensorID         string    `json:"sensor_id"`
     Location         string    `json:"location"`
-    IsVerified       bool      `json:"is_verified"`
-    VerifierID       string    `json:"verifier_id,omitempty"`
+    IsVerified       bool      `json:"IsVerified"`
+    VerifierID       string    `json:"VerifierID"`
     VerificationTime time.Time `json:"verification_time,omitempty"`
 }
 

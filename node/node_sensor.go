@@ -15,14 +15,16 @@ type SensorNode struct {
 	BaseNode
 	readInterval time.Duration
 	errorRate    float32
+	baseTemp     []float32 // [low, high]
 }
 
 // NewSensorNode creates a new sensor node
-func NewSensorNode(id string, interval time.Duration, errorRate float32) *SensorNode {
+func NewSensorNode(id string, interval time.Duration, errorRate float32, baseTempLow float32, baseTempHigh float32) *SensorNode {
     return &SensorNode{
         BaseNode:     NewBaseNode(id, "sensor"),
         readInterval: interval,
         errorRate:    errorRate,
+	baseTemp:     []float32{baseTempLow, baseTempHigh},
     }
 }
 
@@ -67,19 +69,21 @@ func (s *SensorNode) Start() error {
 
 // generateReading produces a simulated temperature reading
 func (s *SensorNode) generateReading() models.Reading {
-    // Generate a base realistic temperature (here, between 15°C and 30°C)
-    baseTemp := 15.0 + rand.Float32()*15.0
+    // Generate a base realistic temperature (between low and high values).
+    baseTemp := rand.Float32() * (s.baseTemp[1] - s.baseTemp[0]) + s.baseTemp[0]
     
     // Sometimes introduce errors based on errorRate
     if rand.Float32() < s.errorRate {
-        // Generate an erroneous reading (very high or very low)
-        if rand.Float32() < 0.5 {
-            // Abnormally high
-            baseTemp = baseTemp + 50.0 + rand.Float32()*100.0
-        } else {
-            // Abnormally low
-            baseTemp = baseTemp - 50.0 - rand.Float32()*100.0
-        }
+	// Generate erroneous readings (very high)
+	baseTemp = baseTemp + 50.0 + rand.Float32()*100.0
+        // // Generate an erroneous reading (very high or very low)
+        // if rand.Float32() < 0.5 {
+        //     // Abnormally high
+        //     baseTemp = baseTemp + 50.0 + rand.Float32()*100.0
+        // } else {
+        //     // Abnormally low
+        //     baseTemp = baseTemp - 50.0 - rand.Float32()*100.0
+        // }
     }
     
     // Add some minor natural variation

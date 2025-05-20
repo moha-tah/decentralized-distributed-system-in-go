@@ -16,22 +16,23 @@ import (
 type VerifierNode struct {
 	BaseNode
 	processingCapacity int
-	threshold          float64
+	threshold          float32
 	verificationLocks  map[string]bool            // Maps item IDs to lock status
 	lockRequests       map[string]map[string]int  // Maps item IDs to node IDs and timestamps
 	lockedItems        map[string]string          // Maps item IDs to noded locking each one
 	lockReplies        map[string]map[string]bool // Maps item IDs to node IDs and reply status
 	otherVerifiers     map[string]bool            // Set of other verifier node IDs
-	nbOfVerifiers      int			      // Number of verifiers in the network
+	nbOfVerifiers      int			      // Number of OTHER verifiers in the network
 	recentReadings     map[string][]models.Reading// FIFO queue per sender
 	processingItems    map[string]bool            // Items currently being processed by this verifier
 	pendingItems       []models.Reading           // Queue of items waiting to be processed
 	verifiedItemIDs    map[string][]string        // Tracks the verified item for each sender by their ID
 	mutex              sync.Mutex                 // Mutex for thread safety
+	baseTemp     []float32 			      // Base temperature [low, high]
 }
 
 // NewVerifierNode creates a new verifier node
-func NewVerifierNode(id string, capacity int, threshold float64) *VerifierNode {
+func NewVerifierNode(id string, capacity int, threshold float32, baseTempLow float32, baseTempHigh float32) *VerifierNode {
 	return &VerifierNode{
 		BaseNode: NewBaseNode(id, "verifier"),
 		processingCapacity: capacity,
@@ -47,6 +48,7 @@ func NewVerifierNode(id string, capacity int, threshold float64) *VerifierNode {
 		pendingItems:       make([]models.Reading, 0),
 		verifiedItemIDs:    make(map[string][]string),
 		mutex:              sync.Mutex{},
+		baseTemp:     	    []float32{baseTempLow, baseTempHigh},
 	}
 }
 
@@ -323,6 +325,13 @@ func (v *VerifierNode) findUnverifiedReadings() {
 
 // requestLock starts the distributed locking protocol for an item
 func (v *VerifierNode) requestLock(reading models.Reading) {
+
+	// If this is the only verifier, we can process the item directly
+	if v.nbOfVerifiers == 0 { // No other verifiers
+		go v.acquiredFullLockOnItem(reading.ReadingID)
+		return
+	}
+
 	itemID := reading.ReadingID
 
 	v.mutex.Lock()
@@ -570,13 +579,7 @@ func (v *VerifierNode) processItem(itemID string) {
 	}
 	v.mutex.Unlock()
 	
-	// Dummy wait time as specified
-	time.Sleep(2 * time.Second)
-	
 	// Process the item - perform the verification
-	// TODO: All functions need to be truly implemented:
-	// fetch the item data, validate it, clamp values, etc.
-	// Here they are just placeholders.
 	readingValue := v.getItemReadingValue(itemID)
 	
 	// Clamp to acceptable range
@@ -589,22 +592,35 @@ func (v *VerifierNode) processItem(itemID string) {
 	v.releaseLock(itemID)
 }
 
-// TODO getItemReadingValue retrieves the reading value for an item
+// getItemReadingValue retrieves the reading value for an item
 func (v *VerifierNode) getItemReadingValue(itemID string) float32 {
-	return 0.0
+	value, err := v.getValueFromReadingID(itemID)
+	if err != nil {
+		format.Display(format.Format_e(v.GetName(), "getItemReadingValue()", "Error getting value from item ID: "+itemID +".Err is:"+err.Error()))
+		return 0.0
+	}
+	return value
 }
 
-// TODO clampToAcceptableRange ensures the value is within the acceptable range
+// clampToAcceptableRange ensures the value is within the acceptable range
 func (v *VerifierNode) clampToAcceptableRange(value float32) float32 {
-	minValue := float32(-100.0)
-	maxValue := float32(100.0)
+	minValue := v.baseTemp[0]
+	maxValue := v.baseTemp[1]
+
+	// Wait (ie. processing time) before clamping if not 
+	// in the range:
+	if value < minValue - v.threshold || value > maxValue + v.threshold {
+		time.Sleep(2 * time.Second)
+	}
 	
-	if value < minValue {
-		return minValue
+	// Take verifier's threshold into account:
+	if value < minValue - v.threshold {
+		return minValue - v.threshold
 	}
-	if value > maxValue {
-		return maxValue
+	if value > maxValue + v.threshold {
+		return maxValue + v.threshold 
 	}
+
 	return value
 }
 

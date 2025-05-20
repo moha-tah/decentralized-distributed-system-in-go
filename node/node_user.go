@@ -1,13 +1,19 @@
 package node
 
 import (
-	"strings"
-	"sync"
 	"distributed_system/format"
 	"distributed_system/models"
 	"distributed_system/utils"
+	"fmt"
 	"log" // Added for logging errors
 	"strconv"
+	"strings"
+	"sync"
+	
+	// Server and JSON libraries:
+	"net/http"
+	"time"
+	"encoding/json"
 )
 
 // UserNode represents a user in the system
@@ -17,13 +23,15 @@ type UserNode struct {
 	decayFactor	   float32 		       // Decay factor in some prediction functions
 	lastPrediction     *float32                    // pointer to allow nil value at start
 	recentReadings     map[string][]models.Reading // FIFO queue per sender
-	recentPredictions  map[string][]float32      	// FIFO queue per sender of made predictions
+	recentPredictions  map[string][]float32        // FIFO queue per sender of made predictions
 	verifiedItemIDs    map[string][]string         // Tracks the verified item for each sender by their ID
 	mutex		   sync.Mutex
+	httpServer         *http.Server                // HTTP server for web UI
+	port               int                         // HTTP server port
 }
 
 // NewUserNode creates a new user node
-func NewUserNode(id string, model string) *UserNode {
+func NewUserNode(id string, model string, port int) *UserNode {
 
 	// Set the prediction function based on the model type
 	var predFunction func (values []float32, decay float32) float32
@@ -45,12 +53,17 @@ func NewUserNode(id string, model string) *UserNode {
 		recentPredictions:  make(map[string][]float32),
 		verifiedItemIDs:    make(map[string][]string),
 		mutex: 		    sync.Mutex{},
+		port:               port,
 	}
 }
 
 // Start begins the verifier's operation
 func (u *UserNode) Start() error {
-	format.Display(format.Format_d("node_user.go", "Start()", "Starting user node "+u.GetName()))
+	format.Display(format.Format_d("node_user.go", "Start()", "Starting user node "+u.GetName() + " on port "+strconv.Itoa(u.port)))
+	
+	// Start the HTTP server for web UI
+	go u.startWebServer()
+
 	u.isRunning = true
 	return nil
 }
@@ -213,7 +226,7 @@ func (n *UserNode) printDatabase() {
 	for sensor, readings := range n.recentReadings {
 		debug += sensor + "\n"
 		for _, r := range readings {
-			debug += "	" + r.ReadingID + " status:" + strconv.FormatBool(r.IsVerified) + " verifier:" + r.VerifierID + "\n"
+			debug += "	" + r.ReadingID +  "  " + fmt.Sprintf("%.2f", r.Temperature) + " verifier:" + r.VerifierID + "\n"
 		}
 	} 
 	
@@ -227,4 +240,251 @@ func (n *UserNode) printDatabase() {
 	n.mutex.Unlock()
 	format.Display(format.Format_e(n.GetName(), "handleLockRelease()", debug))
 
+}
+
+
+// startWebServer initializes and starts the HTTP server for the web UI
+func (u *UserNode) startWebServer() {
+	mux := http.NewServeMux()
+	
+	// Serve the dashboard HTML page
+	mux.HandleFunc("/", u.handleDashboard)
+	
+	// API endpoint to get data in JSON format
+	mux.HandleFunc("/api/data", u.handleAPIData)
+	
+	// Serve static files if needed
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	
+	u.httpServer = &http.Server{
+		Addr:    fmt.Sprintf(":%d", u.port),
+		Handler: mux,
+	}
+	
+	format.Display(format.Format_d("node_user.go", "startWebServer()", 
+		fmt.Sprintf("%s starting web server on port %d", u.GetName(), u.port)))
+	
+	if err := u.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("%s: Error starting web server: %v", u.GetName(), err)
+	}
+}
+
+
+// handleDashboard serves the HTML dashboard
+func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	html := `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>` + u.GetName() + ` Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .sensor-container {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+        .reading {
+            padding: 8px;
+            margin: 5px 0;
+            background-color: white;
+            border: 1px solid #eee;
+            border-radius: 3px;
+        }
+        .reading.verified {
+            border-left: 4px solid #4CAF50;
+        }
+        .prediction {
+            margin-top: 10px;
+            padding: 8px;
+            background-color: #e1f5fe;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .timestamp {
+            color: #666;
+            font-size: 0.8em;
+            text-align: right;
+        }
+        .refresh-button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+            margin-bottom: 20px;
+        }
+        .refresh-button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>` + u.GetName() + ` Dashboard</h1>
+        <button class="refresh-button" onclick="fetchData()">Refresh Data</button>
+        <div id="last-updated" class="timestamp"></div>
+        <div id="sensors-data"></div>
+    </div>
+
+    <script>
+        // Fetch data from the API and update the UI
+        function fetchData() {
+            fetch('/api/data')
+                .then(response => response.json())
+                .then(data => {
+                    updateUI(data);
+                })
+                .catch(error => {
+                    console.error('Error fetching data:', error);
+                });
+        }
+
+        // Update the UI with the fetched data
+        function updateUI(data) {
+            const sensorsContainer = document.getElementById('sensors-data');
+            sensorsContainer.innerHTML = '';
+            
+            document.getElementById('last-updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+            
+            // Create UI elements for each sensor
+            for (const [sensorId, readings] of Object.entries(data.readings)) {
+                const sensorElement = document.createElement('div');
+                sensorElement.className = 'sensor-container';
+                
+                // Sensor header
+                const sensorHeader = document.createElement('h2');
+                sensorHeader.textContent = 'Sensor: ' + sensorId;
+                sensorElement.appendChild(sensorHeader);
+                
+                // Readings
+                if (readings && readings.length > 0) {
+                    const readingsHeader = document.createElement('h3');
+                    readingsHeader.textContent = 'Readings';
+                    sensorElement.appendChild(readingsHeader);
+                    
+                    readings.forEach(function(reading) {
+                        const readingElement = document.createElement('div');
+                        readingElement.className = 'reading' + (reading.IsVerified ? ' verified' : '');
+                        
+                        const idDiv = document.createElement('div');
+                        idDiv.textContent = 'ID: ' + (reading.ReadingID || 'Unknown');
+                        readingElement.appendChild(idDiv);
+                        
+                        const tempDiv = document.createElement('div');
+                        tempDiv.textContent = 'Temperature: ' + (reading.Temperature !== undefined ? 
+                            parseFloat(reading.Temperature).toFixed(2) : 'N/A');
+                        readingElement.appendChild(tempDiv);
+                        
+                        const clockDiv = document.createElement('div');
+                        clockDiv.textContent = 'Clock: ' + (reading.Clock || 'N/A');
+                        readingElement.appendChild(clockDiv);
+                        
+                        const verifiedDiv = document.createElement('div');
+                        if (reading.IsVerified) {
+                            verifiedDiv.textContent = 'Verified by: ' + (reading.VerifierID || 'Unknown');
+                        } else {
+                            verifiedDiv.textContent = 'Not verified yet';
+                        }
+                        readingElement.appendChild(verifiedDiv);
+                        
+                        sensorElement.appendChild(readingElement);
+                    });
+                } else {
+                    const noReadings = document.createElement('p');
+                    noReadings.textContent = 'No readings available';
+                    sensorElement.appendChild(noReadings);
+                }
+                
+                // Predictions
+                if (data.predictions && data.predictions[sensorId] && data.predictions[sensorId].length > 0) {
+                    const predictionElement = document.createElement('div');
+                    predictionElement.className = 'prediction';
+                    const latestPrediction = data.predictions[sensorId][data.predictions[sensorId].length - 1];
+                    predictionElement.textContent = 'Latest prediction: ' + 
+                        (latestPrediction !== undefined ? parseFloat(latestPrediction).toFixed(4) : 'N/A');
+                    sensorElement.appendChild(predictionElement);
+                }
+                
+                sensorsContainer.appendChild(sensorElement);
+            }
+        }
+
+        // Initial data fetch
+        fetchData();
+        
+        // Set up automatic refresh every 5 seconds
+        setInterval(fetchData, 5000);
+    </script>
+</body>
+</html>
+`
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(html))
+}
+
+// handleAPIData serves the node's data in JSON format
+func (u *UserNode) handleAPIData(w http.ResponseWriter, r *http.Request) {
+	u.mutex.Lock()
+	defer u.mutex.Unlock()
+	
+	// Create a clean copy of readings to ensure proper JSON serialization
+	readingsCopy := make(map[string][]models.Reading)
+	for sensor, readings := range u.recentReadings {
+		readingsCopy[sensor] = make([]models.Reading, len(readings))
+		copy(readingsCopy[sensor], readings)
+	}
+	
+	// Create a clean copy of predictions
+	predictionsCopy := make(map[string][]float32)
+	for sensor, predictions := range u.recentPredictions {
+		predictionsCopy[sensor] = make([]float32, len(predictions))
+		copy(predictionsCopy[sensor], predictions)
+	}
+	
+	// Prepare data for JSON response
+	data := struct {
+		NodeName    string                    `json:"nodeName"`
+		Readings    map[string][]models.Reading `json:"readings"`
+		Predictions map[string][]float32      `json:"predictions"`
+		Timestamp   int64                     `json:"timestamp"`
+	}{
+		NodeName:    u.GetName(),
+		Readings:    readingsCopy,
+		Predictions: predictionsCopy,
+		Timestamp:   time.Now().Unix(),
+	}
+	
+	// Set response headers
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	
+	// Encode and send JSON response
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("%s: Error encoding JSON: %v", u.GetName(), err)
+		http.Error(w, "Error generating data", http.StatusInternalServerError)
+		return
+	}
 }

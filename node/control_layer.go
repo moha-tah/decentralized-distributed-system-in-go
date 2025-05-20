@@ -466,7 +466,7 @@ func (c *ControlLayer) ClosePearDiscovery() {
 	}
 	
 	// Display update nb of site as all other nodes will do when receiving:
-	format.Display(format.Format_e(c.GetName(), "ClosePearDis()", "Updated nb sites to " + strconv.Itoa(c.nbOfKnownSites)))
+	format.Display(format.Format_g(c.GetName(), "ClosePearDis()", "Updated nb sites to " + strconv.Itoa(c.nbOfKnownSites)))
 
 	c.SendControlMsg(msg_content, "siteNames", "pear_discovery_sealing", "control", "", c.GetName())
 }
