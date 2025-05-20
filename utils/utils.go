@@ -48,3 +48,28 @@ func FindIndex(name string, sites []string) int {
 	}
 	panic(fmt.Sprintf("utils.FindIndex: name %q not found in site list %v", name, sites))
 }
+
+func VectorClockCompatible(vc1, vc2 []int) bool {
+	lessOrEqual := true
+	greaterOrEqual := true
+	for i := 0; i < len(vc1); i++ {
+		if vc1[i] > vc2[i] {
+			lessOrEqual = false
+		}
+		if vc2[i] > vc1[i] {
+			greaterOrEqual = false
+		}
+	}
+	return lessOrEqual || greaterOrEqual
+}
+
+func ParseFloatArray(s string) []float32 {
+	parts := strings.Split(s, ",")
+	var result []float32
+	for _, part := range parts {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(part), 32); err == nil {
+			result = append(result, float32(f))
+		}
+	}
+	return result
+}

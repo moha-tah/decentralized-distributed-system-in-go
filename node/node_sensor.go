@@ -42,7 +42,7 @@ func (s *SensorNode) Start() error {
 		"Starting sensor node "+s.GetName()))
 
 	s.isRunning = true
-	
+
 	go func() {
 		for {
 			s.clock = s.clock + 1
@@ -171,11 +171,27 @@ func (s *SensorNode) logFullMessage(msg_id string, reading models.Reading) {
 func (s *SensorNode) ID() string   { return s.id }
 func (s *SensorNode) Type() string { return s.nodeType }
 func (s *SensorNode) HandleMessage(channel chan string) {
-		for msg := range channel {
-			// 🔎 Identifier le type de message
-			msgType := format.Findval(msg, "type", s.GetName())
+	for msg := range channel {
+		// 🔎 Identifier le type de message
+		msgType := format.Findval(msg, "type", s.GetName())
 
-			// 🔁 Mettre à jour le vector clock à la réception
+		// 🔁 Mettre à jour le vector clock à la réception
+		vcStr := format.Findval(msg, "vector_clock", s.GetName())
+		recvVC, err := utils.DeserializeVectorClock(vcStr)
+		if err == nil {
+			for i := 0; i < len(s.vectorClock); i++ {
+				s.vectorClock[i] = utils.Max(s.vectorClock[i], recvVC[i])
+			}
+			s.vectorClock[s.nodeIndex] += 1
+		}
+
+		switch msgType {
+
+		case "snapshot_request":
+			format.Display(format.Format_d(
+				s.GetName(), "HandleMessage()",
+				"🔎 snapshot_request reçu depuis "))
+			// 🔁 Mettre à jour l'horloge vectorielle à la réception du message
 			vcStr := format.Findval(msg, "vector_clock", s.GetName())
 			recvVC, err := utils.DeserializeVectorClock(vcStr)
 			if err == nil {
@@ -185,52 +201,37 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 				s.vectorClock[s.nodeIndex] += 1
 			}
 
+			// 🧠 Lire les dernières valeurs stockées
+			readings := make([]string, len(s.recentReadings))
+			for i, val := range s.recentReadings {
+				readings[i] = strconv.FormatFloat(float64(val), 'f', 2, 32)
+			}
+			readingsStr := "[" + strings.Join(readings, ", ") + "]"
 
-			switch msgType {
+			// 📨 Création du message snapshot_response
+			originalRequester := format.Findval(msg, "sender_name", s.GetName())
+			msgID := s.GenerateUniqueMessageID()
+			msgResponse := format.Msg_format_multi(format.Build_msg_args(
+				"id", msgID,
+				"type", "snapshot_response",
+				"sender_name", originalRequester,
+				"sender_name_source", s.GetName(),
+				"sender_type", s.Type(),
+				"destination", format.Findval(msg, "sender_name_source", s.GetName()),
+				"clk", strconv.Itoa(s.clock),
+				"vector_clock", utils.SerializeVectorClock(s.vectorClock),
+				"content_type", "snapshot_data",
+				"content_value", readingsStr,
+			))
 
-			case "snapshot_request":
-				format.Display("[SensorNode] ✅snapshot_request reçu")
-				// 🔁 Mettre à jour l'horloge vectorielle à la réception du message
-				vcStr := format.Findval(msg, "vector_clock", s.GetName())
-				recvVC, err := utils.DeserializeVectorClock(vcStr)
-				if err == nil {
-					for i := 0; i < len(s.vectorClock); i++ {
-						s.vectorClock[i] = utils.Max(s.vectorClock[i], recvVC[i])
-					}
-					s.vectorClock[s.nodeIndex] += 1
-				}
+			// 🗂️ Log optionnel
+			format.Display(format.Format_d(s.GetName(), "HandleMessage()", "Sending snapshot_response: "+readingsStr))
 
-				// 🧠 Lire les dernières valeurs stockées
-				readings := make([]string, len(s.recentReadings))
-				for i, val := range s.recentReadings {
-					readings[i] = strconv.FormatFloat(float64(val), 'f', 2, 32)
-				}
-				readingsStr := "[" + strings.Join(readings, ", ") + "]"
-
-				// 📨 Création du message snapshot_response
-				originalRequester := format.Findval(msg, "sender_name", s.GetName())
-				msgID := s.GenerateUniqueMessageID()
-				msgResponse := format.Msg_format_multi(format.Build_msg_args(
-					"id", msgID,
-					"type", "snapshot_response",
-					"sender_name", originalRequester,
-					"sender_name_source", s.GetName(),
-					"sender_type", s.Type(),
-					"destination", format.Findval(msg, "sender_name_source", s.GetName()),
-					"clk", strconv.Itoa(s.clock),
-					"vector_clock", utils.SerializeVectorClock(s.vectorClock),
-					"content_type", "snapshot_data",
-					"content_value", readingsStr,
-				))
-
-				// 🗂️ Log optionnel
-				format.Display(format.Format_d(s.GetName(), "HandleMessage()", "Sending snapshot_response: "+readingsStr))
-
-				s.ctrlLayer.SendApplicationMsg(msgResponse)
-				// Envoi vers couche application
-				if s.ctrlLayer.SendApplicationMsg(msg) == nil {
-					s.nbMsgSent = s.nbMsgSent + 1
-				}
+			s.ctrlLayer.SendApplicationMsg(msgResponse)
+			// Envoi vers couche application
+			if s.ctrlLayer.SendApplicationMsg(msg) == nil {
+				s.nbMsgSent = s.nbMsgSent + 1
 			}
 		}
+	}
 }
