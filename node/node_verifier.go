@@ -1,9 +1,12 @@
 package node
 
 import (
+	"fmt"
 	"strconv"
+	"time"
+
 	// "bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
-	// "os"    // Use for the bufio reader: reads from os stdin
+	"os" // Use for the bufio reader: reads from os stdin
 	// "strings"
 	"distributed_system/format"
 	"distributed_system/utils"
@@ -45,6 +48,11 @@ func (v *VerifierNode) Start() error {
 	v.isRunning = true
 
 	return nil
+}
+
+func (v *VerifierNode) InitVectorClockWithSites(sites []string) {
+	v.vectorClock = make([]int, len(sites))
+	v.nodeIndex = utils.FindIndex(v.GetControlName(), sites)
 }
 
 // HandleMessage processes incoming messages from control app
@@ -92,7 +100,70 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			// Optional: Log the current queue state for debugging
 			log.Printf("%s: Current readings queue for %s: %v", v.GetName(), msg_sender, queue)
 
+			// Définir le code d'état
+			var stateCode int
+			if readingVal > v.threshold || readingVal < -v.threshold {
+				stateCode = 2 // invalid
+			} else {
+				stateCode = 1 // valid
+			}
+
+			// Sauvegarde dans le fichier log
+			v.logReceivedReading(msg_sender, readingVal, stateCode)
+		case "snapshot_response":
+			fmt.Println("[VerifierNode] ✅ snapshot_response reçu")
+			// 🔁 Mise à jour du vector clock
+			vcStr := format.Findval(msg, "vector_clock", v.GetName())
+			recvVC, err := utils.DeserializeVectorClock(vcStr)
+			if err == nil {
+				for i := 0; i < len(v.vectorClock); i++ {
+					v.vectorClock[i] = utils.Max(v.vectorClock[i], recvVC[i])
+				}
+				v.vectorClock[v.nodeIndex] += 1
+			}
+
+			// Extraire infos
+			snapshotData := format.Findval(msg, "content_value", v.GetName())
+			sensorID := format.Findval(msg, "sender_name", v.GetName())
+			originalRequester := format.Findval(msg, "sender_name_source", v.GetName()) // le UserNode !
+
+			//(plus tard : vérifier cohérence)
+			format.Display(format.Format_d(v.GetName(), "HandleMessage()", "Received snapshot from "+sensorID+" → "+snapshotData))
+
+			// Construire message de réponse
+			msgID := v.GenerateUniqueMessageID()
+			response := format.Msg_format_multi(format.Build_msg_args(
+				"id", msgID,
+				"type", "snapshot_verified",
+				"sender_name", v.GetName(),
+				"sender_name_source", v.GetName(),
+				"sender_type", v.Type(),
+				"destination", originalRequester, // vers UserNode qui a demandé
+				"clk", strconv.Itoa(v.clock),
+				"vector_clock", utils.SerializeVectorClock(v.vectorClock),
+				"content_type", "status",
+				"content_value", "valid snapshot from "+sensorID,
+			))
+
+			// Envoi vers UserNode
+			v.ctrlLayer.SendApplicationMsg(response)
+
 		}
 	}
 
+}
+
+func (v *VerifierNode) logReceivedReading(sender string, temperature float64, stateCode int) {
+	filename := "node_" + v.ID() + ".log"
+
+	line := "/" + "timestamp=" + time.Now().Format(time.RFC3339) +
+		"/from=" + sender +
+		"/temp=" + strconv.FormatFloat(temperature, 'f', 2, 64) +
+		"/state=" + strconv.Itoa(stateCode) + "\n"
+
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		defer f.Close()
+		f.WriteString(line)
+	}
 }
