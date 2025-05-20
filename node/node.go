@@ -2,6 +2,7 @@ package node
 
 import (
 	"strconv"
+	"sync"
 )
 
 // Node defines the interface for all node types in the system
@@ -34,12 +35,14 @@ type Node interface {
 // BaseNode implements common functionality for all node types
 type BaseNode struct {
 	id        	string
+	mu		sync.Mutex
 	nodeType  	string
 	isRunning 	bool
 	ctrlLayer 	*ControlLayer
 	nbMsgSent	int
-	clock     	int	
+	clk		int // Temporary variable for the vector clock
 	vectorClock []int // taille = nombre total de noeuds
+	vectorClockReady bool // true après pear_discovery_sealing
 	nodeIndex   int   // position de ce node dans le vecteur
 }
 
@@ -47,10 +50,13 @@ type BaseNode struct {
 func NewBaseNode(id, nodeType string) BaseNode {
 	return BaseNode{
 		id:        id,
+		mu:        sync.Mutex{},
 		nodeType:  nodeType,
 		isRunning: false,
-		clock:     0,
 		nbMsgSent: 0,
+		clk: 0,
+		nodeIndex: 0,
+		vectorClockReady: false,
 	}
 }
 
@@ -86,6 +92,7 @@ func (n *BaseNode) GenerateUniqueMessageID() string {
 }
 
 func (n *BaseNode) InitVectorClockWithSites(siteNames []string) {
+	n.mu.Lock()
 	n.vectorClock = make([]int, len(siteNames))
 	for i, name := range siteNames {
 		if name == n.GetName() {
@@ -93,4 +100,5 @@ func (n *BaseNode) InitVectorClockWithSites(siteNames []string) {
 			break
 		}
 	}
+	n.mu.Unlock()
 }

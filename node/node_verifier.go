@@ -1,9 +1,7 @@
 package node
 
 import (
-	// "fmt"
 	"strconv"
-	"sync"
 	"time"
 	"os"
 	"distributed_system/format"
@@ -20,7 +18,7 @@ type VerifierNode struct {
 	processingCapacity int
 	threshold          float32
 	verificationLocks  map[string]bool            // Maps item IDs to lock status
-	lockRequests       map[string]map[string]int  // Maps item IDs to node IDs and timestamps
+	lockRequests       map[string]map[string]int// Maps item IDs to node IDs and timestamps
 	lockedItems        map[string]string          // Maps item IDs to noded locking each one
 	lockReplies        map[string]map[string]bool // Maps item IDs to node IDs and reply status
 	otherVerifiers     map[string]bool            // Set of other verifier node IDs
@@ -29,7 +27,6 @@ type VerifierNode struct {
 	processingItems    map[string]bool            // Items currently being processed by this verifier
 	pendingItems       []models.Reading           // Queue of items waiting to be processed
 	verifiedItemIDs    map[string][]string        // Tracks the verified item for each sender by their ID
-	mutex              sync.Mutex                 // Mutex for thread safety
 	baseTemp     []float32 			      // Base temperature [low, high]
 }
 
@@ -49,7 +46,6 @@ func NewVerifierNode(id string, capacity int, threshold float32, baseTempLow flo
 		processingItems:    make(map[string]bool),
 		pendingItems:       make([]models.Reading, 0),
 		verifiedItemIDs:    make(map[string][]string),
-		mutex:              sync.Mutex{},
 		baseTemp:     	    []float32{baseTempLow, baseTempHigh},
 	}
 }
@@ -64,18 +60,18 @@ func (v *VerifierNode) Start() error {
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
 				
-		v.mutex.Lock()
+		v.mu.Lock()
 		isRunning := v.isRunning 
 		processingCapacity := v.processingCapacity
-		v.mutex.Unlock()
+		v.mu.Unlock()
 		
 		for isRunning {
 			select {
 			case <-ticker.C:
-				v.mutex.Lock()
+				v.mu.Lock()
 				isRunning = v.isRunning 
 				l_processing := len(v.processingItems)
-				v.mutex.Unlock()
+				v.mu.Unlock()
 
 				// Only check for unverified items if we're not already processing 
 				// more than the processing capacity.
@@ -98,8 +94,11 @@ func (v *VerifierNode) Start() error {
 }
 
 func (v *VerifierNode) InitVectorClockWithSites(sites []string) {
+	v.mu.Lock()
 	v.vectorClock = make([]int, len(sites))
 	v.nodeIndex = utils.FindIndex(v.ctrlLayer.GetName(), sites)
+	v.vectorClockReady = true
+	v.mu.Unlock()
 }
 
 // HandleMessage processes incoming messages from control app
@@ -113,15 +112,18 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 	    }()
 
 	for msg := range channel {
-		var msg_clock string = format.Findval(msg, "clk", v.GetName())
-
-		v.mutex.Lock()
-	
-		// Update Lamport clock based on received message
-		msg_clock_int, _ := strconv.Atoi(msg_clock)
-		v.clock = utils.Synchronise(v.clock, msg_clock_int)
-
-		v.mutex.Unlock()
+		v.mu.Lock()
+		clk_int := 0
+		if v.vectorClockReady == false {
+			rec_clk, _ := strconv.Atoi(format.Findval(msg, "clk", v.GetName()))
+			v.clk = utils.Synchronise(v.clk, rec_clk)
+			clk_int = v.clk
+		} else {
+			recVC := format.RetrieveVectorClock(msg, len(v.vectorClock))
+			v.vectorClock = utils.SynchroniseVectorClock(v.vectorClock, recVC, v.nodeIndex)
+			clk_int = v.vectorClock[v.nodeIndex]
+		}
+		v.mu.Unlock()
 
 		var msg_type string = format.Findval(msg, "type", v.GetName())
 		var msg_content_value string = format.Findval(msg, "content_value", v.GetName())
@@ -139,7 +141,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			}
 
 			// Get or create the queue for the sender
-			v.mutex.Lock()
+			v.mu.Lock()
 			queue, exists := v.recentReadings[msg_sender]
 			if !exists {
 				queue = make([]models.Reading, 0, utils.VALUES_TO_STORE)
@@ -156,7 +158,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			queue = append(queue, models.Reading{
 				ReadingID: format.Findval(msg, "item_id", v.GetName()),
 				Temperature: float32(readingVal),
-				Clock:   msg_clock_int,
+				Clock:      clk_int,
 				SensorID:    msg_sender,
 				IsVerified:  false,
 			})
@@ -171,7 +173,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 				stateCode = 1 // valid
 			}
 
-			v.mutex.Unlock()
+			v.mu.Unlock()
 
 			// Sauvegarde dans le fichier log
 			v.logReceivedReading(msg_sender, readingVal, stateCode)
@@ -192,33 +194,33 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 		case "lock_request_cancelled":
 			// Remove the lock request for this item 
 			itemID := format.Findval(msg, "item_id", v.GetName()) 
-			v.mutex.Lock() 
+			v.mu.Lock() 
 			// Remove the lock request from our map 
 			delete(v.lockRequests, itemID) 
 			// Remove the lock replies for this item 
 			delete(v.lockReplies, itemID) 
-			v.mutex.Unlock()
+			v.mu.Unlock()
 
 		case "pear_discovery_verifier":
 			// This message is recieved from our control layer and 
 			// contains the list of verifiers in the network.
 			site_names := strings.Split(msg_content_value, utils.PearD_SITE_SEPARATOR)
 			// Add each verifier to our list of known verifiers :
-			v.mutex.Lock()
+			v.mu.Lock()
 			for _, site_name := range site_names {
 				if site_name != v.GetName() {
 					v.otherVerifiers[site_name] = true
 					v.nbOfVerifiers++
 				}
 			}
-			v.mutex.Unlock()
+			v.mu.Unlock()
 
-			v.mutex.Lock()
+			v.mu.Lock()
 			debug := "Nb of verifiers: " + strconv.Itoa(v.nbOfVerifiers)
 			for key := range v.otherVerifiers {
 				debug += " " + key
 			}
-			v.mutex.Unlock()
+			v.mu.Unlock()
 			format.Display(format.Format_g(v.GetName(), "HandleMessage()", debug))
 		}
 	}
@@ -244,20 +246,25 @@ func (v *VerifierNode) removeAllExistenceOfReading(readingID string) {
 // SendMessage sends a message to the control layer.
 // Here is done the logic needed before and after sending the message
 func (v *VerifierNode) SendMessage(msg string) {
-	v.mutex.Lock()
-	v.clock++
-	timestamp := v.clock
-	v.mutex.Unlock()
+	v.mu.Lock()
+	v.vectorClock[v.nodeIndex]++
+	serializedClock := utils.SerializeVectorClock(v.vectorClock)
+	v_clk := v.clk
+	v.mu.Unlock()
 
-	msg = format.Replaceval(msg, "clk", strconv.Itoa(timestamp))
+	if v.vectorClockReady {
+		msg = format.Replaceval(msg, "vector_clock", serializedClock)
+	} else {
+		msg = format.Replaceval(msg, "clk", strconv.Itoa(v_clk))
+	}
 	msg = format.Replaceval(msg, "id", v.GenerateUniqueMessageID())
 	v.ctrlLayer.SendApplicationMsg(msg)
 
 	// Increment the number of messages sent
 	// (used in ID generation, for next messages)
-	v.mutex.Lock()
+	v.mu.Lock()
 	v.nbMsgSent++
-	v.mutex.Unlock()
+	v.mu.Unlock()
 
 }
 
@@ -266,9 +273,9 @@ func (v *VerifierNode) CheckUnverifiedItems() {
 	// Re-launch the search for unverified items
 	v.findUnverifiedReadings()
 
-	v.mutex.Lock()
+	v.mu.Lock()
 	l_pending := len(v.pendingItems)
-	v.mutex.Unlock()
+	v.mu.Unlock()
 	
 	// No items to process
 	if l_pending == 0 {
@@ -277,10 +284,10 @@ func (v *VerifierNode) CheckUnverifiedItems() {
 	
 	// Get the next unverified item
 	pendingItem := v.chooseReadingToVerify() // The item we want to process
-	v.mutex.Lock()
+	v.mu.Lock()
 	itemID := pendingItem.ReadingID  // Its ID
 	var is_processingItem bool = v.processingItems[itemID] // Are we already processing it?
-	v.mutex.Unlock()
+	v.mu.Unlock()
 
 	// Check if we're already processing this item
 	if is_processingItem {
@@ -288,9 +295,9 @@ func (v *VerifierNode) CheckUnverifiedItems() {
 	}
 	
 	// Mark that we're about to start processing this item
-	v.mutex.Lock()
+	v.mu.Lock()
 	v.processingItems[itemID] = true
-	v.mutex.Unlock()
+	v.mu.Unlock()
 	
 	// Try to acquire a distributed lock for this item
 	go v.requestLock(pendingItem)
@@ -300,16 +307,16 @@ func (v *VerifierNode) CheckUnverifiedItems() {
 // No logic needed for now => just return the last one (as Users
 // weight the most recent readings heavier).
 func (v *VerifierNode) chooseReadingToVerify() models.Reading {
-	v.mutex.Lock()
+	v.mu.Lock()
 	r := v.pendingItems[len(v.pendingItems)-1] // Get the last item
-	v.mutex.Unlock()
+	v.mu.Unlock()
 	return r
 }
 
 // findUnverifiedReadings checks all senders for readings that need verification
 // and adds them to the pending items queue.
 func (v *VerifierNode) findUnverifiedReadings() {
-	v.mutex.Lock()
+	v.mu.Lock()
 
 	// First, delete all the pendingItems (because we will re-add them)
 	v.pendingItems = make([]models.Reading, 0)
@@ -338,7 +345,7 @@ func (v *VerifierNode) findUnverifiedReadings() {
 		}
 
 	}
-	v.mutex.Unlock()
+	v.mu.Unlock()
 }
 
 // requestLock starts the distributed locking protocol for an item
@@ -352,19 +359,22 @@ func (v *VerifierNode) requestLock(reading models.Reading) {
 
 	itemID := reading.ReadingID
 
-	v.mutex.Lock()
+	v.mu.Lock()
 	// Initialize maps if needed
 	// First, the lock requests = the requests we sent.
 	if _, exists := v.lockRequests[itemID]; !exists {
 		v.lockRequests[itemID] = make(map[string]int)
 	}
-	v.lockRequests[itemID][v.GetName()] = v.clock
+	v.lockRequests[itemID][v.GetName()] = v.vectorClock[v.nodeIndex] // Add our request to the map
 
 	// Then, the lock replies = the replies we received
 	// for this item. We reset replies for this item
 	// as we are requesting a new lock.
 	v.lockReplies[itemID] = make(map[string]bool)
-	v.mutex.Unlock()
+
+	our_VC := utils.SerializeVectorClock(v.vectorClock)
+
+	v.mu.Unlock()
 	
 	// Broadcast lock request to all other verifiers
 	msg_id := v.GenerateUniqueMessageID()
@@ -376,8 +386,10 @@ func (v *VerifierNode) requestLock(reading models.Reading) {
 			"sender_name_source", v.GetName(),
 			"sender_type", v.Type(),
 			"destination", "verifiers",
-			"clk", "",//Change in SendMessage
-			"item_id", itemID))
+			"item_id", itemID,
+			"request_clk", strconv.Itoa(v.vectorClock[v.nodeIndex]),
+			"clk", "",
+			"vector_clock", our_VC,))
 	v.SendMessage(msg)
 }
 
@@ -388,14 +400,17 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 	requestedSenderID := format.Findval(msg, "sender_id", v.GetName())
 	indexStr := format.Findval(msg, "index", v.GetName())
 	itemID := format.Findval(msg, "item_id", v.GetName())
-	msgClockStr := format.Findval(msg, "clk", v.GetName())
-	msgClock, err := strconv.Atoi(msgClockStr)
+
+
+	// msg_VC := format.RetrieveVectorClock(msg, len(v.vectorClock))
+	msgVC_index_str := format.Findval(msg, "request_clk", v.GetName())
+	msgVC_index, err := strconv.Atoi(msgVC_index_str)
 	if err != nil {
-		format.Display(format.Format_e(v.GetName(), "handleLockRequest()", "Error parsing clock value: "+msgClockStr))
+		format.Display(format.Format_e(v.GetName(), "handleLockRequest()", "Error parsing vector clock: "+msgVC_index_str))
 		return
 	}
 	
-	v.mutex.Lock()
+	v.mu.Lock()
 	
 	// Initialize map if needed
 	if _, exists := v.lockRequests[itemID]; !exists {
@@ -412,7 +427,7 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 	} else if _, havePendingRequest := v.lockRequests[itemID][v.GetName()]; havePendingRequest {
 		// Check if we have a pending request with higher priority
 		ourClock := v.lockRequests[itemID][v.GetName()]
-		if ourClock < msgClock || (ourClock == msgClock && v.GetName() < senderID) {
+		if ourClock < msgVC_index || (ourClock == msgVC_index && v.GetName() < senderID) {
 			// In condition above, we are comparing two strings, GetName and senderID,
 			// which are both the names of the verifiers. It is legal in Go.
 			// Used to add arbitrary priority to the lock request.
@@ -422,10 +437,12 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 
 	// Add the request to our lock requests if accepted 
 	if canGrant {
-		v.lockRequests[itemID][senderID] = msgClock
+		v.lockRequests[itemID][senderID] = msgVC_index // Add the request to our map
 	}
 
-	v.mutex.Unlock()
+	our_VC := utils.SerializeVectorClock(v.vectorClock)
+
+	v.mu.Unlock()
 
 	// Send reply
 	replyMsg := format.Msg_format_multi(
@@ -436,11 +453,13 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 			"sender_name_source", v.GetName(),
 			"sender_type", v.Type(),
 			"destination", senderID,
-			"clk", "",//Change in SendMessage
+			"vector_clock", our_VC,
+			"clk","",
 			"sender_id", requestedSenderID,
 			"index", indexStr,
 			"item_id", itemID,
-			"granted", strconv.FormatBool(canGrant)))
+			"granted", strconv.FormatBool(canGrant),
+			))
 	
 	v.SendMessage(replyMsg)
 }
@@ -458,7 +477,7 @@ func (v *VerifierNode) handleLockReply(msg string) {
 		return
 	}
 	
-	v.mutex.Lock()
+	v.mu.Lock()
 	
 	// Initialize map if needed
 	if _, exists := v.lockReplies[itemID]; !exists {
@@ -482,7 +501,7 @@ func (v *VerifierNode) handleLockReply(msg string) {
 			}
 		}
 	}
-	v.mutex.Unlock()
+	v.mu.Unlock()
 	if allReplied && canProcess {
 		go v.acquiredFullLockOnItem(itemID) // We can process the item
 
@@ -494,7 +513,7 @@ func (v *VerifierNode) handleLockReply(msg string) {
 
 // cancelLockRequest cancels the lock request for an item
 func (v *VerifierNode) cancelLockRequest(itemID string) {
-	v.mutex.Lock()
+	v.mu.Lock()
 	// Remove the lock request from our map
 	delete(v.lockRequests, itemID)
 	
@@ -512,7 +531,9 @@ func (v *VerifierNode) cancelLockRequest(itemID string) {
 		}
 	}
 
-	v.mutex.Unlock()
+	our_VC := utils.SerializeVectorClock(v.vectorClock)
+
+	v.mu.Unlock()
 	
 	// Notify other verifiers that we are not processing this item anymore
 	msg := format.Msg_format_multi(
@@ -523,7 +544,8 @@ func (v *VerifierNode) cancelLockRequest(itemID string) {
 			"sender_name_source", v.GetName(),
 			"sender_type", v.Type(),
 			"destination", "verifiers",
-			"clk", "",//Change in SendMessage
+			"vector_clock", our_VC,
+			"clk","",
 			"item_id", itemID))
 	v.SendMessage(msg)
 }
@@ -534,6 +556,11 @@ func (v *VerifierNode) cancelLockRequest(itemID string) {
 // meaning all other verifiers have granted the lock.
 // It needs to 1) say to the other verifiers that we have the lock, while 2) process the item.
 func (v *VerifierNode) acquiredFullLockOnItem(itemID string) {
+
+	v.mu.Lock()
+	our_VC := utils.SerializeVectorClock(v.vectorClock)
+	v.mu.Unlock()
+
 	// 1) Notify other verifiers that we have the lock 
 	msg := format.Msg_format_multi(
 		format.Build_msg_args(
@@ -543,13 +570,14 @@ func (v *VerifierNode) acquiredFullLockOnItem(itemID string) {
 			"sender_name_source", v.GetName(),
 			"sender_type", v.Type(),
 			"destination", "verifiers",
-			"clk", "",//Changed in SendMessage
 			"item_id", itemID,
+			"clk","",
+			"vector_clock", our_VC,
 		),
 	)
 	v.SendMessage(msg)
 
-	v.mutex.Lock()
+	v.mu.Lock()
 
 	// 2) Process the item
 	v.verificationLocks[itemID] = true // Verifying this locks
@@ -558,7 +586,7 @@ func (v *VerifierNode) acquiredFullLockOnItem(itemID string) {
 	delete(v.lockReplies, itemID)
 	v.lockedItems[itemID] = v.GetName() // Item locked by us
 
-	v.mutex.Unlock()
+	v.mu.Unlock()
 	
 	go v.processItem(itemID) // Process the item
 }
@@ -569,7 +597,7 @@ func (v *VerifierNode) handleLockAcquired(msg string) {
 	itemID := format.Findval(msg, "item_id", v.GetName())
 	senderID := format.Findval(msg, "sender_name_source", v.GetName())
 
-	v.mutex.Lock()
+	v.mu.Lock()
 
 	v.lockedItems[itemID] = senderID // Mark that it has the lock 
 
@@ -580,14 +608,14 @@ func (v *VerifierNode) handleLockAcquired(msg string) {
 			break
 		}
 	}
-	v.mutex.Unlock()
+	v.mu.Unlock()
 }
 
 
 // processItem verifies an item after acquiring the lock
 func (v *VerifierNode) processItem(itemID string) {
 	// Remove from pending:
-	v.mutex.Lock()
+	v.mu.Lock()
 	for i, item := range v.pendingItems {
 		var current_itemID string = item.ReadingID
 		if current_itemID == itemID {
@@ -595,7 +623,7 @@ func (v *VerifierNode) processItem(itemID string) {
 			break
 		}
 	}
-	v.mutex.Unlock()
+	v.mu.Unlock()
 	
 	// Process the item - perform the verification
 	readingValue := v.getItemReadingValue(itemID)
@@ -645,7 +673,7 @@ func (v *VerifierNode) clampToAcceptableRange(value float32) float32 {
 // markItemAsVerified updates the item status in the database
 func (v *VerifierNode) markItemAsVerified(itemID string, value float32, verifier string) {
 	// Remove from pending items if it was there
-	v.mutex.Lock()
+	v.mu.Lock()
 	for i, item := range v.pendingItems {
 		var current_itemID string = item.ReadingID
 		if current_itemID == itemID {
@@ -667,7 +695,7 @@ func (v *VerifierNode) markItemAsVerified(itemID string, value float32, verifier
 		format.Display(format.Format_e(v.GetName(), "markIAsVerified()", "Err in isItemInReadings(): "+ err.Error()))
 
 	} else if itemStillPresent == false {
-		v.mutex.Unlock()
+		v.mu.Unlock()
 		return
 	}
 
@@ -680,7 +708,7 @@ func (v *VerifierNode) markItemAsVerified(itemID string, value float32, verifier
 		v.verifiedItemIDs[senderID] = append(v.verifiedItemIDs[senderID], itemID)
 	}
 
-	v.mutex.Unlock()
+	v.mu.Unlock()
 
 	// Update the verified value in the `recentReadings` map:
 	readingIndex, err := v.getReadingIndexFromSender_ID(senderID, itemID)
@@ -688,20 +716,20 @@ func (v *VerifierNode) markItemAsVerified(itemID string, value float32, verifier
 		format.Display(format.Format_e(v.GetName(), "markItemAsVerified()", "Error getting reading index: "+err.Error()))
 		return
 	}
-	v.mutex.Lock()
+	v.mu.Lock()
 	v.recentReadings[senderID][readingIndex].IsVerified = true
 	v.recentReadings[senderID][readingIndex].Temperature = value
 	if verifier== "" {
 		verifier = v.GetName()
 	}
 	v.recentReadings[senderID][readingIndex].VerifierID = verifier
-	v.mutex.Unlock()
+	v.mu.Unlock()
 	format.Display(format.Format_d(v.GetName(), "markItemAsVerified()", "Item "+itemID+" verified by "+verifier))
 }
 
 // releaseLock releases the lock on an item
 func (v *VerifierNode) releaseLock(itemID string) {
-	v.mutex.Lock()
+	v.mu.Lock()
 	// Remove our processing status:
 	delete(v.processingItems, itemID)
 	// No more need to keep this item in the verification locks:
@@ -710,7 +738,7 @@ func (v *VerifierNode) releaseLock(itemID string) {
 	delete(v.lockRequests, itemID)
 	delete(v.lockReplies, itemID)
 	delete(v.lockedItems, itemID)
-	v.mutex.Unlock()
+	v.mu.Unlock()
 	
 	// By the time the verification is done, the item might have been gone (erased 
 	// because new readings were received). If it is the case (ie. the itemID don't 
@@ -736,7 +764,8 @@ func (v *VerifierNode) releaseLock(itemID string) {
 	}
 
 
-	v.mutex.Lock()
+	v.mu.Lock()
+	our_VC := utils.SerializeVectorClock(v.vectorClock)
 	releaseMsgID := v.GenerateUniqueMessageID()
 	releaseMsg := format.Msg_format_multi(
 		format.Build_msg_args(
@@ -746,11 +775,14 @@ func (v *VerifierNode) releaseLock(itemID string) {
 			"sender_name_source", v.GetName(),
 			"sender_type", v.Type(),
 			"destination", "verifiers",
-			"clk", "",//Change in SendMessage
 			"item_id", itemID,
 			"content_type","verified_value",
-			"content_value", strconv.FormatFloat(float64(itemValue), 'f', 2, 32)))
-	v.mutex.Unlock()
+			"content_value", strconv.FormatFloat(float64(itemValue), 'f', 2, 32),
+			"clk","",
+			"vector_clock", our_VC,
+		))
+
+	v.mu.Unlock()
 
 	v.SendMessage(releaseMsg)
 }
@@ -768,12 +800,12 @@ func (v *VerifierNode) handleLockRelease(msg string) {
 	}
 
 	
-	v.mutex.Lock()
+	v.mu.Lock()
 	// Clean up any requests or replies for this item:
 	delete(v.lockRequests, itemID)
 	delete(v.lockReplies, itemID)
 	delete(v.lockedItems, itemID)
-	v.mutex.Unlock()
+	v.mu.Unlock()
 
 	// Update verified value
 	var verifier string = format.Findval(msg, "sender_name_source", v.GetName())
@@ -796,9 +828,9 @@ func (v *VerifierNode) getValueFromReadingID(itemID string) (float32, error) {
 	// Check if the sender ID exists in the recent readings 
 	// (function might be called with wrong sender ID). And then 
 	// find the reading for this sender.
-	v.mutex.Lock()
+	v.mu.Lock()
 	queue, exists := v.recentReadings[senderID]
-	v.mutex.Unlock()
+	v.mu.Unlock()
 	if !exists {
 		return 0.0, fmt.Errorf("No sender <" + senderID  + "> in v.recentReadings.")
 	} else {
@@ -815,9 +847,9 @@ func (v *VerifierNode) getValueFromReadingID(itemID string) (float32, error) {
 }
 func (v *VerifierNode) getReadingIndexFromSender_ID(senderID string, itemID string) (int, error) {
 	// Check if the sender ID exists in the recent readings 
-	v.mutex.Lock()
+	v.mu.Lock()
 	queue, exists := v.recentReadings[senderID]
-	v.mutex.Unlock()
+	v.mu.Unlock()
 	
 	if !exists {
 		return -1, fmt.Errorf("item not found")

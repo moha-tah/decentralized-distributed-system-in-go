@@ -34,8 +34,11 @@ func NewSensorNode(id string, interval time.Duration, errorRate float32, baseTem
 }
 
 func (s *SensorNode) InitVectorClockWithSites(sites []string) {
+	s.mu.Lock()
 	s.vectorClock = make([]int, len(sites))
 	s.nodeIndex = utils.FindIndex(s.ctrlLayer.GetName(), sites)
+	s.vectorClockReady = true
+	s.mu.Unlock()
 }
 
 // Start begins the sensor's operation
@@ -48,19 +51,30 @@ func (s *SensorNode) Start() error {
 
 	go func() {
 		for {
-			s.clock = s.clock + 1
-
 			// ✅ Incrémenter l’horloge vectorielle locale
-			s.vectorClock[s.nodeIndex] += 1
+			s.mu.Lock()
+			s_clk_str := ""
+			s_VC_str := ""
+			if s.vectorClockReady == false {
+				s.clk += 1
+				s_clk_str = strconv.Itoa(s.clk)
+			} else {
+				s.vectorClock[s.nodeIndex] += 1
+				s_clk_str = strconv.Itoa(s.vectorClock[s.nodeIndex])
+				s_VC_str = utils.SerializeVectorClock(s.vectorClock)
+			}
+			s.mu.Unlock()
 
 			// Générer une lecture
 			reading := s.generateReading()
 
 			// ✅ Stocker dans le FIFO local
+			s.mu.Lock()
 			if len(s.recentReadings) >= 15 {
 				s.recentReadings = s.recentReadings[1:]
 			}
 			s.recentReadings = append(s.recentReadings, float32(reading.Temperature))
+			s.mu.Unlock()
 
 			// Créer le message
 			msg_id := s.GenerateUniqueMessageID()
@@ -71,10 +85,10 @@ func (s *SensorNode) Start() error {
 				"sender_name_source", s.GetName(),
 				"sender_type", s.Type(),
 				"destination", "applications",
-				"clk", strconv.Itoa(s.clock),
 				"content_type", "sensor_reading",
-				"vector_clock", utils.SerializeVectorClock(s.vectorClock),
-				"item_id", fmt.Sprintf("%s_%d", s.GetName(), s.clock),
+				"vector_clock", s_VC_str,
+				"clk", s_clk_str,
+				"item_id", fmt.Sprintf("%s_%s", s.GetName(), s_clk_str),
 				"content_value", strconv.FormatFloat(float64(reading.Temperature), 'f', -1, 32),
 			))
 
@@ -82,7 +96,9 @@ func (s *SensorNode) Start() error {
 
 			// Envoi vers couche application
 			if (*s.ctrlLayer).SendApplicationMsg(msg) == nil {
+				s.mu.Lock()
 				s.nbMsgSent = s.nbMsgSent + 1
+				s.mu.Unlock()
 			}
 
 			time.Sleep(2 * time.Second)
@@ -123,24 +139,6 @@ func (s *SensorNode) initLogFile() {
 	}
 }
 
-// logSensorReading enregistre une lecture dans un fichier texte
-// func (s *SensorNode) logSensorReading(temperature float32) {
-// 	filename := "sensor_" + s.ID() + "_data.log"
-
-// 	// Créer le format inspiré de message.go
-// 	line := "/" + "timestamp=" + time.Now().Format(time.RFC3339) +
-// 		"/sensor_id=" + s.ID() +
-// 		"/temp=" + strconv.FormatFloat(float64(temperature), 'f', 2, 64) +
-// 		"/state=" + "0" + "\n"
-
-// 	// Ajouter au fichier
-// 	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-// 	if err == nil {
-// 		defer f.Close()
-// 		f.WriteString(line)
-// 	}
-// }
-
 func (s *SensorNode) logFullMessage(msg_id string, reading models.Reading) {
 	filename := "node_" + s.ID() + "_log.txt"
 
@@ -152,7 +150,7 @@ func (s *SensorNode) logFullMessage(msg_id string, reading models.Reading) {
 		"/sender_name_source=" + s.GetName() +
 		"/sender_type=" + s.Type() +
 		"/destination=" + destination +
-		"/clk=" + strconv.Itoa(s.clock) +
+		"/clk=" + strconv.Itoa(s.vectorClock[s.nodeIndex]) +
 		"/vector_clock=" + utils.SerializeVectorClock(s.vectorClock) +
 		"/content_type=sensor_reading" +
 		"/content_value=" + strconv.FormatFloat(float64(reading.Temperature), 'f', -1, 32) +
@@ -173,22 +171,12 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 		msgType := format.Findval(msg, "type", s.GetName())
 
 		// 🔁 Mettre à jour le vector clock à la réception
-		vcStr := format.Findval(msg, "vector_clock", s.GetName())
-		recvVC, err := utils.DeserializeVectorClock(vcStr)
-		if err == nil {
-			for i := 0; i < len(s.vectorClock); i++ {
-				s.vectorClock[i] = utils.Max(s.vectorClock[i], recvVC[i])
-			}
-			s.vectorClock[s.nodeIndex] += 1
-		}
-
-		switch msgType {
-
-		case "snapshot_request":
-			format.Display(format.Format_d(
-				s.GetName(), "HandleMessage()",
-				"🔎 snapshot_request reçu depuis "))
-			// 🔁 Mettre à jour l'horloge vectorielle à la réception du message
+		s.mu.Lock()
+		if s.vectorClockReady == false {
+			recClk, _ := strconv.Atoi(format.Findval(msg, "clk", s.GetName()))
+			s.clk = utils.Synchronise(s.clk, recClk)
+			
+		} else {
 			vcStr := format.Findval(msg, "vector_clock", s.GetName())
 			recvVC, err := utils.DeserializeVectorClock(vcStr)
 			if err == nil {
@@ -196,13 +184,26 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 					s.vectorClock[i] = utils.Max(s.vectorClock[i], recvVC[i])
 				}
 				s.vectorClock[s.nodeIndex] += 1
-			}
+		}
+		}
+		s.mu.Unlock()
+
+		switch msgType {
+
+		case "snapshot_request":
+			format.Display(format.Format_d(
+				s.GetName(), "HandleMessage()",
+				"🔎 snapshot_request reçu depuis "))
 
 			// 🧠 Lire les dernières valeurs stockées
+			s.mu.Lock()
 			readings := make([]string, len(s.recentReadings))
 			for i, val := range s.recentReadings {
 				readings[i] = strconv.FormatFloat(float64(val), 'f', 2, 32)
 			}
+			s_VC := utils.SerializeVectorClock(s.vectorClock)
+			s_clk := strconv.Itoa(s.clk)
+			s.mu.Unlock()
 			readingsStr := "[" + strings.Join(readings, ", ") + "]"
 
 			// 📨 Création du message snapshot_response
@@ -215,11 +216,11 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 				"sender_name_source", s.GetName(),
 				"sender_type", s.Type(),
 				"destination", format.Findval(msg, "sender_name_source", s.GetName()),
-				"clk", strconv.Itoa(s.clock),
-				"vector_clock", utils.SerializeVectorClock(s.vectorClock),
+				"vector_clock", s_VC,
 				"content_type", "snapshot_data",
-				"content_value", readingsStr,
+				"clk", s_clk,
 			))
+
 
 			// 🗂️ Log optionnel
 			format.Display(format.Format_d(s.GetName(), "HandleMessage()", "Sending snapshot_response: "+readingsStr))
@@ -227,7 +228,9 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 			s.ctrlLayer.SendApplicationMsg(msgResponse)
 			// Envoi vers couche application
 			if s.ctrlLayer.SendApplicationMsg(msg) == nil {
+				s.mu.Lock()
 				s.nbMsgSent = s.nbMsgSent + 1
+				s.mu.Unlock()
 			}
 		}
 	}

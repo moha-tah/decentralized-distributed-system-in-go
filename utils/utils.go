@@ -16,6 +16,17 @@ func Synchronise(x int, y int) int {
 	return max(x, y) + 1
 }
 
+func SynchroniseVectorClock(vc1 []int, vc2 []int, caller_index int) []int {
+	if len(vc1) != len(vc2) {
+		panic("utils.SynchroniseVectorClock: vector clocks must be of the same length")
+	}
+	for i := 0; i < len(vc1); i++ {
+		vc1[i] = max(vc1[i], vc2[i])
+	}
+	vc1[caller_index] += 1
+	return vc1
+}
+
 func RemoveAllOccurrencesInt(slice []int, value int) []int {
 	var result []int
 	for _, v := range slice {
@@ -95,4 +106,30 @@ func ParseFloatArray(s string) []float32 {
 		}
 	}
 	return result
+}
+
+func SliceIntEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// SliceIntGreaterThan checks if all elements of a are smaller than b
+// return true if a < b
+func SliceIntLessThan(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] >= b[i] {
+			return false
+		}
+	}
+	return true
 }

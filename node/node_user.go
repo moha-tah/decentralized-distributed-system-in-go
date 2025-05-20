@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
-
 	// Server and JSON libraries:
 	"encoding/json"
 	"net/http"
@@ -27,7 +25,6 @@ type UserNode struct {
 	recentReadings     map[string][]models.Reading // FIFO queue per sender
 	recentPredictions  map[string][]float32        // FIFO queue per sender of made predictions
 	verifiedItemIDs    map[string][]string         // Tracks the verified item for each sender by their ID
-	mutex		   sync.Mutex
 	httpServer         *http.Server                // HTTP server for web UI
 	port               int                         // HTTP server port
 }
@@ -55,7 +52,6 @@ func NewUserNode(id string, model string, port int) *UserNode {
 		recentReadings:     make(map[string][]models.Reading),
 		recentPredictions:  make(map[string][]float32),
 		verifiedItemIDs:    make(map[string][]string),
-		mutex: 		    sync.Mutex{},
 		port:               port,
 	}
 }
@@ -72,22 +68,30 @@ func (u *UserNode) Start() error {
 }
 
 func (u *UserNode) InitVectorClockWithSites(sites []string) {
+	u.mu.Lock()
 	u.vectorClock = make([]int, len(sites))
 	u.nodeIndex = utils.FindIndex(u.ctrlLayer.GetName(), sites)
+	u.vectorClockReady = true
+	u.mu.Unlock()
 }
 
 // HandleMessage processes incoming messages from control layer
 func (u *UserNode) HandleMessage(channel chan string) {
 
 	for msg := range channel {
-		var msg_clock string = format.Findval(msg, "clk", u.GetName())
-
-		// Update Lamport clock based on received message
-		msg_clock_int, _ := strconv.Atoi(msg_clock)
-
-		u.mutex.Lock()
-		u.clock = utils.Synchronise(u.clock, msg_clock_int)
-		u.mutex.Unlock()
+		u.mu.Lock()
+		clk_int := 0
+		if u.vectorClockReady == false {
+			rec_clk_str := format.Findval(msg, "clk", u.GetName())
+			rec_clk, _ := strconv.Atoi(rec_clk_str)
+			u.clk = utils.Synchronise(u.clk, rec_clk)
+			clk_int = u.clk
+		} else {
+			recVC := format.RetrieveVectorClock(msg, len(u.vectorClock), u.vectorClockReady)
+			u.vectorClock = utils.SynchroniseVectorClock(u.vectorClock, recVC, u.nodeIndex)
+			clk_int = u.vectorClock[u.nodeIndex]
+		}
+		u.mu.Unlock()
 
 		var msg_type string = format.Findval(msg, "type", u.GetName())
 		var msg_content_value string = format.Findval(msg, "content_value", u.GetName())
@@ -109,7 +113,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 			}
 
 			// Get or create the queue for the sender
-			u.mutex.Lock()
+			u.mu.Lock()
 			queue, exists := u.recentReadings[msg_sender]
 			if !exists {
 				queue = make([]models.Reading, 0, utils.VALUES_TO_STORE)
@@ -129,12 +133,12 @@ func (u *UserNode) HandleMessage(channel chan string) {
 			queue = append(queue, models.Reading{
 				ReadingID: format.Findval(msg, "item_id", u.GetName()),
 				Temperature: float32(readingVal),
-				Clock:   msg_clock_int,
+				Clock:   clk_int,
 				SensorID:    msg_sender,
 				IsVerified:  false,
 			})
 			u.recentReadings[msg_sender] = queue // Update the map
-			u.mutex.Unlock()
+			u.mu.Unlock()
 
 			u.processDatabse()
 		case "lock_release_and_verified_value":
@@ -158,7 +162,7 @@ func (n *UserNode) handleLockRelease(msg string) {
 		return
 	}
 
-	n.mutex.Lock()
+	n.mu.Lock()
 
 	// By the time the verification is done, the item might have been gone (erased 
 	// because new readings were received). If it is the case (ie. the itemID don't 
@@ -173,7 +177,7 @@ func (n *UserNode) handleLockRelease(msg string) {
 		}
 	}
 	if isItemInReadings == false {
-		n.mutex.Unlock()
+		n.mu.Unlock()
 		return
 	}
 
@@ -184,14 +188,14 @@ func (n *UserNode) handleLockRelease(msg string) {
 		n.verifiedItemIDs[sensorID] = make([]string, 0)
 		n.verifiedItemIDs[sensorID] = append(n.verifiedItemIDs[sensorID], itemID)
 	}
-	n.mutex.Unlock()
+	n.mu.Unlock()
 
 	// Update verified value:
-	n.mutex.Lock()
+	n.mu.Lock()
 	n.recentReadings[sensorID][readingIndex].IsVerified = true
 	n.recentReadings[sensorID][readingIndex].Temperature = float32(verifiedValue)
 	n.recentReadings[sensorID][readingIndex].VerifierID = verifier
-	n.mutex.Unlock()
+	n.mu.Unlock()
 	n.processDatabse()
 }
 
@@ -199,9 +203,9 @@ func (n *UserNode) handleLockRelease(msg string) {
 func (n *UserNode) processDatabse() {
 
 	// One prediction per sensor: 
-	n.mutex.Lock()
+	n.mu.Lock()
 	recentReadings := n.recentReadings 
-	n.mutex.Unlock()
+	n.mu.Unlock()
 	for sensor, readings := range recentReadings {
 		var readingValues []float32 = make([]float32, len(readings))
 		for _, r := range readings {
@@ -210,7 +214,7 @@ func (n *UserNode) processDatabse() {
 		prediction := n.predictionFunc(readingValues, n.decayFactor)
 		// Get or create the queue for the sender
 
-		n.mutex.Lock()
+		n.mu.Lock()
 		queue, exists := n.recentPredictions[sensor]
 		if !exists {
 			queue = make([]float32, 0, utils.VALUES_TO_STORE)
@@ -223,7 +227,7 @@ func (n *UserNode) processDatabse() {
 		}
 		queue = append(queue, prediction)
 		n.recentPredictions[sensor] = queue // Update the map
-		n.mutex.Unlock()
+		n.mu.Unlock()
 	}
 	n.printDatabase()
 }
@@ -231,7 +235,7 @@ func (n *UserNode) processDatabse() {
 func (n *UserNode) printDatabase() {
 	var debug string = n.GetName()+" database:\n"
 
-	n.mutex.Lock()
+	n.mu.Lock()
 
 	// 1. Sort and print readings
 	sensorNames := make([]string, 0, len(n.recentReadings))
@@ -260,7 +264,7 @@ func (n *UserNode) printDatabase() {
 	}
 
 
-	n.mutex.Unlock()
+	n.mu.Unlock()
 	format.Display(format.Format_e(n.GetName(), "handleLockRelease()", debug))
 
 }
@@ -664,8 +668,8 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIData serves the node's data in JSON format
 func (u *UserNode) handleAPIData(w http.ResponseWriter, r *http.Request) {
-	u.mutex.Lock()
-	defer u.mutex.Unlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	
 	// Create a clean copy of readings to ensure proper JSON serialization
 	readingsCopy := make(map[string][]models.Reading)

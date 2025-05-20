@@ -1,0 +1,36 @@
+- [ ] replace all replaceVar("clk") to vector clock
+- [X] Verifiers should verify the most recent reading (as Users have the heaviest weights on those)
+- [X] only log users' database to make sure the FIFO + verified value works
+- [X] controlers should increase their clock when sending to app layer
+- [X] Call a "predictive" module on user when adding a new value to FIFO.
+- [X] Send verified items to users
+- [X] Shouldn't we delete the item from pending queue when entering processing ?
+	- [X] Check that pending queue isn't used and that it wouldn't be an issue
+- [X] Test queue: take a smaller queue length, as 1 => What happens to the items that were under processing and disappeared from queue?
+- [X] Test sensors: test with multiple sensors
+- [X] Test verifiers: test with multiple verifiers 
+- [X] Test capacity: Make in sort that verifiers' capacities are taken into account 
+- [X] ⁉️ Why, after markIAsVerif writes "Marked item"... "as verified", the other nodes do not receive anything?
+	- [X] This might be why nothing happens any more: they are not releasing their locked list as they are not receving lockRelease!
+		- [X] Though they should still go on to another reading... Is there a mutex deadlock ??
+	- [X]🔥 WHY DON'T we see a "Releasing lock for item..." debug on console right after "marked iterm as verifier"?
+		- [X] Verify that every call to markAsVerified is followed by a realease lock
+		- [X] Put many logs in releaseLock() to see where the deadlock is
+- [X] in requestLock, we prepare the lockRequests slice, but do we fill something in?
+	- [X] in handleLockReply?
+	- [X] In fact we need to 
+	      - [X] Ask other LockRequest
+	      - [X] If we can process: 
+		    - [X] process AND send to other that we are locking it
+		    - [X] Which means that when we grant a lock request,  we log in lockRequests
+		    - [X] and when we receive the lockRequestsConfirmation (true/false) we remove it from lockRequests and add it (if true) to lockedItems
+		    - [X] when processing lockRequests, we now need to check in lockedItems to see if we are locking it
+- [X] do we know which reading are locked and from who?
+- [x] implement chooseReadingToVerify()
+- [X] use chooseReadingToVerify() in CheckUnverifiedItems()
+- [X] getReadingFromID()
+- [X] findUnverifiedReadings()
+- [X] verifiedIndices should be a list of ItemID verified for each sender
+- [X] continue markItemasVerified: take given value into account!!
+- [X] update handleLockRelease to take into account the verified value sent in the message
+- [X] check all method called in HandleMessage and remove their inner clock.Synchronize, as this is already done in HandleMessage

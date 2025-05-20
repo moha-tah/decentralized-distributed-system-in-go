@@ -19,7 +19,7 @@ type ControlLayer struct {
 	nodeType  string
 	isRunning bool
 
-	clock            int
+	clk 		int
 	vectorClockReady bool  // true when nbOfKnownSites is set
 	vectorClock      []int // Size = nbOfKnownSites when init.
 	nodeIndex        int   // position of this node in the vector
@@ -56,7 +56,9 @@ func NewControlLayer(id string, child Node) *ControlLayer {
 		id: id,
 		nodeType: "control",
 		isRunning: false,
-		clock: 	   0,
+		vectorClock: []int{0},
+		clk: 0,
+		nodeIndex:  0,
 		child:	   child,
 		nbMsgSent: 0,
 		IDWatcher:  utils.NewMIDWatcher(),
@@ -92,7 +94,9 @@ func (c *ControlLayer) Start() error {
 		go func() {
 			time.Sleep(time.Duration(1) * time.Second)
 			c.SendPearDiscovery()
+			format.Display(format.Format_d(c.GetName(), "SendMsg()", "Sending pear discovery message..."))
 			time.Sleep(time.Duration(1) * time.Second)
+			format.Display(format.Format_d(c.GetName(), "SendMsg()", "Waiting for pear discovery answers..."))
 			c.ClosePearDiscovery() // Will send known names to all nodes
 
 			// Start the child only after
@@ -100,7 +104,7 @@ func (c *ControlLayer) Start() error {
 		}()
 		//demande de snapshot après 5 secondes
 		go func() {
-			time.Sleep(20 * time.Second) // attendre que tout soit initialisé
+			time.Sleep(5 * time.Second) // attendre que tout soit initialisé
 			format.Display(format.Format_d("Start()", c.GetName(), "⏳ 20s écoulées, envoi de la requête snapshot..."))
 			c.RequestSnapshot()
 			format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
@@ -149,12 +153,15 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		// format.Display(format.Format_w(c.GetName(), "HandleMsg()", "Received: "+msg))
 	}
 
-	// Update Lamport clock based on received message
-	var msg_clock string = format.Findval(msg, "clk", c.GetName())
-	msg_clock_int, _ := strconv.Atoi(msg_clock)
-
 	c.mu.Lock()
-	c.clock = utils.Synchronise(c.clock, msg_clock_int)
+	// Update vector clock 
+	if c.vectorClockReady {
+		recVC := format.RetrieveVectorClock(msg, len(c.vectorClock), c.vectorClockReady)
+		c.vectorClock = utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
+	} else {
+		resClk, _ := strconv.Atoi(format.Findval(msg, "clk", c.GetName()))
+		c.clk = utils.Synchronise(c.clk, resClk)
+	}
 	c.mu.Unlock()
 
 	// Extract msg caracteristics
@@ -237,7 +244,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				for _, site := range sites_parts {
 					c.knownSiteNames = append(c.knownSiteNames, site)
 				}
-				if len(sites_verifiers_parts) > 1 {
+				if len(sites_verifiers_parts) >= 1 {
 					verifiers_parts := sites_verifiers_parts[1]
 					verifiers := strings.Split(verifiers_parts, utils.PearD_SITE_SEPARATOR)
 					c.knownVerifierNames = append(c.knownVerifierNames, verifiers...)
@@ -247,13 +254,18 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				c.pearDiscoverySealed = true
 				c.mu.Unlock()
 
+
+				// Propagation à d'autres contrôleurs
+				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
+				c.SendMsg(propagate_msg)
+
+
+				// ✅ INITIALISATION DU VECTEUR DANS L’ENFANT
+				c.InitVectorClockWithSites(knownSiteNames)
+				c.child.InitVectorClockWithSites(knownSiteNames)
+
 				// If any verifier name, send it to verifier chile (if it is a verifier)
 				if c.child.Type() == "verifier" {
-					
-					c.mu.Lock()
-					clk := c.clock
-					c.mu.Unlock()
-
 					// Send to child app through channel 
 					msg_to_verifier := format.Msg_format_multi(format.Build_msg_args(
 						"id", format.Findval(msg, "id", c.GetName()),
@@ -264,24 +276,17 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 						"destination", c.child.GetName(),
 						"content_type", "siteNames",
 						"content_value", strings.Join(c.knownVerifierNames, utils.PearD_SITE_SEPARATOR),
-						"clk", strconv.Itoa(clk)))
+						"clk", "", // changed in SendMsg
+						"vector_clock", "", // changed in SendMsg
+						))
 					c.SendMsg(msg_to_verifier, true) // through channel
 				}
 
 				format.Display(format.Format_g(c.GetName(), "HandleMsg()", "Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
-
-
-				// ✅ INITIALISATION DU VECTEUR DANS L’ENFANT
-				c.child.InitVectorClockWithSites(knownSiteNames)
-				c.InitVectorClockWithSites(knownSiteNames)
-
-				format.Display(format.Format_e(
-					c.GetName(), "HandleMsg()",
-					"Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
-
-				// Propagation à d'autres contrôleurs
-				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
-				c.SendMsg(propagate_msg)
+				//
+				// format.Display(format.Format_e(
+				// 	c.GetName(), "HandleMsg()",
+				// 	"Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
 			}
 
 		}
@@ -422,9 +427,12 @@ func (c *ControlLayer) AddNewMessageId(sender_name string, MID_str string) {
 }
 
 func (c *ControlLayer) InitVectorClockWithSites(sites []string) {
+	c.mu.Lock()
 	c.vectorClock = make([]int, len(sites))
 	c.nodeIndex = utils.FindIndex(c.GetName(), sites)
 	c.vectorClockReady = true
+	c.vectorClock[c.nodeIndex] = 0
+	c.mu.Unlock()
 }
 
 // SendMsgFromApplication is the portal between control layer and application
@@ -433,11 +441,9 @@ func (c *ControlLayer) InitVectorClockWithSites(sites []string) {
 // so no check if already got the message (=already seen the ID).
 // => Is it a receiving action followed by a call to sending action
 func (c *ControlLayer) SendApplicationMsg(msg string) error {
-	var rcv_clk string = format.Findval(msg, "clk", c.GetName())
-	rcv_clk_int, _ := strconv.Atoi(rcv_clk)
-
 	c.mu.Lock()
-	c.clock = utils.Synchronise(c.clock, rcv_clk_int)
+	recVC := format.RetrieveVectorClock(msg, len(c.vectorClock), c.vectorClockReady)
+	c.vectorClock = utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
 	c.mu.Unlock()
 
 	c.SendMsg(msg)
@@ -465,7 +471,8 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 			"sender_name_source", sender_name_source,
 			"sender_type", "control",
 			"destination", destination,
-			"clk", strconv.Itoa(int(c.clock)), // Will be replaced in c.SendMsg
+			"clk", "", // Will be replaced in c.SendMsg
+			"vector_clock", "", // Will be replaced in c.SendMsg
 			"content_type", msg_content_type,
 			"content_value", msg_content))
 
@@ -494,14 +501,14 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs... bool) {
 	c.AddNewMessageId(msg_sender, msg_NbMessageSent_str)
 
 	c.mu.Lock()
-	c.clock = c.clock + 1
 	if c.vectorClockReady {
 		c.vectorClock[c.nodeIndex] += 1 // Incrément de l'horloge vectorielle locale
 		msg = format.Replaceval(msg, "vector_clock", utils.SerializeVectorClock(c.vectorClock))
+	} else {
+		c.clk += 1 // Incrément de l'horloge locale
+		msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clk))
 	}
 	c.mu.Unlock()
-
-	msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clock))
 
 	if through_channel {
 		select {
@@ -523,7 +530,6 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs... bool) {
 // SendPearDiscovery sends a message asking for pear discovery
 // The content_value of the message is the name to which the
 // nodes must answer (in this project, is fixed to node id 0)
-// (TODO: modify above if changed)
 // 🔥ONLY node whose id is zero will send the pear discovery message.
 func (c *ControlLayer) SendPearDiscovery() {
 	c.SendControlMsg(c.GetName(), "siteName", "pear_discovery", "control", "", c.GetName())
@@ -554,12 +560,12 @@ func (c *ControlLayer) ClosePearDiscovery() {
 	knownSiteNames := c.knownSiteNames
 	c.mu.Unlock()
 
-	// ✅ Init vector clocks of current control layer & child's
-	c.child.InitVectorClockWithSites(knownSiteNames)
-	c.InitVectorClockWithSites(knownSiteNames)
-
 	// Send final sealing message with control names + verifier names
 	c.SendControlMsg(msg_content, "siteNames", "pear_discovery_sealing", "control", "", c.GetName())
+
+	// ✅ Init vector clocks of current control layer & child's
+	c.InitVectorClockWithSites(knownSiteNames)
+	c.child.InitVectorClockWithSites(knownSiteNames)
 }
 
 // Return true if the message's ID is contained with
@@ -683,7 +689,7 @@ func (c *ControlLayer) SaveSnapshotToCSV() {
 	defer c.mu.RUnlock()
 
 	// Nom dynamique basé sur l’horloge Lamport du contrôleur
-	filename := fmt.Sprintf("snapshot_%d.csv", c.clock)
+	filename := fmt.Sprintf("snapshot_%d.csv", c.vectorClock[c.nodeIndex])
 
 	file, err := os.Create(filename)
 	if err != nil {

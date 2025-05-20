@@ -1,10 +1,12 @@
 package format
 
 import (
+	"distributed_system/utils"
 	"fmt"
 	"log"
-	"strings"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 func Findval(msg string, key string, p_nom string) string {
@@ -87,7 +89,7 @@ func Build_msg_args(args ...string) map[string]string {
 	// Check mandatory keys: at least sender_name and clk need
 	// to be present in the message = they have to be
 	// given as input to Build_msg_args
-	var mandatory_keys = []string{"sender_name", "clk", "destination", "id"}
+	var mandatory_keys = []string{"sender_name", "vector_clock", "destination", "id"}
 	for _, key := range mandatory_keys {
 		if _, ok := data[key]; !ok {
 			log.Fatal(Format_e(
@@ -119,4 +121,29 @@ func Msg_format_multi(kvPairs map[string]string) string {
 		result += fieldsep + keyvalsep + key + keyvalsep + kvPairs[key]
 	}
 	return result
+}
+
+
+
+func RetrieveVectorClock(msg string, length_to_compare int, panic_args... bool) []int {
+	panicing := false
+	if len(panic_args) > 0 {
+		panicing = panic_args[0]
+	}
+	panicing = true
+	recVC_str := Findval(msg, "vector_clock", "retrieveVectorClock")
+	recVC, err := utils.DeserializeVectorClock(recVC_str)
+	if err != nil {
+stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock deserialization: " + err.Error()))
+		if panicing {
+		return nil
+		}
+	}
+	if len(recVC) != length_to_compare {
+		stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock length: "+strconv.Itoa(len(recVC_str)) + "vs "+strconv.Itoa(length_to_compare)))
+		if panicing {
+		return nil
+		}
+	}
+	return recVC 
 }
