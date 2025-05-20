@@ -4,6 +4,7 @@ import (
 	"bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
 	"distributed_system/format"
 	"distributed_system/utils"
+	"fmt"
 	"os" // Use for the bufio reader: reads from os stdin
 	"slices"
 	"strconv"
@@ -17,12 +18,17 @@ type ControlLayer struct {
 	id        string
 	nodeType  string
 	isRunning bool
-	clock     int
+
+	clock            int
+	vectorClockReady bool  // true when nbOfKnownSites is set
+	vectorClock      []int // Size = nbOfKnownSites when init.
+	nodeIndex        int   // position of this node in the vector
+
 	child     Node
 	nbMsgSent uint64
 	// Seen IDs of all received messages:
 	// To help preventing the reading of same msg if it loops
-	IDWatcher	       *utils.MIDWatcher
+	IDWatcher              *utils.MIDWatcher
 	channel_to_application chan string
 
 	nbOfKnownSites       int
@@ -30,6 +36,12 @@ type ControlLayer struct {
 	knownVerifierNames   []string 
 	sentDiscoveryMessage bool // To send its name only once
 	pearDiscoverySealed  bool
+	receivedSnapshots    map[string]SnapshotData
+}
+
+type SnapshotData struct {
+	VectorClock []int
+	Values      []float32
 }
 
 func (c *ControlLayer) GetName() string {
@@ -54,6 +66,7 @@ func NewControlLayer(id string, child Node) *ControlLayer {
 		pearDiscoverySealed: false,
 		knownSiteNames: make([]string, 0),
 		knownVerifierNames: make([]string, 0),
+		receivedSnapshots:      make(map[string]SnapshotData),
     }
 }
 
@@ -84,6 +97,13 @@ func (c *ControlLayer) Start() error {
 
 			// Start the child only after
 			c.child.Start()
+		}()
+		//demande de snapshot après 5 secondes
+		go func() {
+			time.Sleep(20 * time.Second) // attendre que tout soit initialisé
+			format.Display(format.Format_d("Start()", c.GetName(), "⏳ 20s écoulées, envoi de la requête snapshot..."))
+			c.RequestSnapshot()
+			format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
 		}()
 	} else {
 		go func() { // Wake up child only after pear discovery is finished
@@ -118,7 +138,7 @@ func (c *ControlLayer) Start() error {
 // HandleMessage processes incoming messages
 func (c *ControlLayer) HandleMessage(msg string) error {
 	// Make sure we never saw this message before.
-	// It might happen eg. in a bidirectionnal ring 
+	// It might happen eg. in a bidirectionnal ring
 	if c.SawThatMessageBefore(msg) {
 		return nil
 	} 
@@ -143,7 +163,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	// var msg_content_value string = format.Findval(msg, "content_value", c.GetName())
 	// Original Sender: (used in IDWatcher to check if a msg from this node has already
 	// been received)
-	// var sender_name_source string = format.Findval(msg, "sender_name_source", c.GetName())
+	var sender_name_source string = format.Findval(msg, "sender_name_source", c.GetName())
 
 	// Will be used at the end to check if
 	// control layer needs to resend the message to all other nodes
@@ -153,11 +173,17 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		switch msg_type {
 		case "new_reading":
 			// Send to child app
-			// c.child.HandleMessage(msg)
-			if c.child.Type() != "sensor" {
-				c.SendMsg(msg, true) // through channel
-			}
-			propagate_msg = true // Propagation is done after the `if msg_destination`
+			c.SendMsg(msg, true)
+
+			propagate_msg = true
+
+		case "snapshot_request":
+			// c.channel_to_application <- msg
+			c.SendMsg(msg, true)
+			format.Display(format.Format_d(
+				c.GetName(), "HandleMessage()",
+				"📥 snapshot_request reçu depuis "+sender_name_source))
+			propagate_msg = true
 		}
 
 	} else if msg_destination == "control" {
@@ -193,13 +219,11 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				// Then propagate the pear_discovery
 				var propagated_msg string = format.Replaceval(msg, "sender_name", c.GetName())
 				c.SendMsg(propagated_msg)
-
-				c.sentDiscoveryMessage = true
+				c.sentDiscoveryMessage = true // Do not send it another time
 			}
 		case "pear_discovery_sealing":
 
 			if !c.pearDiscoverySealed {
-				c.pearDiscoverySealed = true
 				// 💡The node responsible of pear discovery will also do the following, as
 				// no condition on node id. Done that way in order to have the message dispayling
 				// the number of known nodes, even for the node 0.
@@ -219,6 +243,8 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 					c.knownVerifierNames = append(c.knownVerifierNames, verifiers...)
 				}
 				c.nbOfKnownSites = len(c.knownSiteNames)
+				knownSiteNames := c.knownSiteNames
+				c.pearDiscoverySealed = true
 				c.mu.Unlock()
 
 				// If any verifier name, send it to verifier chile (if it is a verifier)
@@ -244,7 +270,16 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 
 				format.Display(format.Format_g(c.GetName(), "HandleMsg()", "Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
 
-				// Propagate answer to other
+
+				// ✅ INITIALISATION DU VECTEUR DANS L’ENFANT
+				c.child.InitVectorClockWithSites(knownSiteNames)
+				c.InitVectorClockWithSites(knownSiteNames)
+
+				format.Display(format.Format_e(
+					c.GetName(), "HandleMsg()",
+					"Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
+
+				// Propagation à d'autres contrôleurs
 				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
 				c.SendMsg(propagate_msg)
 			}
@@ -282,7 +317,46 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				c.knownVerifierNames = append(c.knownVerifierNames, verifierName)
 			}
 
+		case "snapshot_response":
+
+			if c.id != "0_control" {
+				return nil
+			}
+
+			format.Display(format.Format_d(c.GetName(), "HandleMessage()", "📥 snapshot_response reçu"))
+
+			// Mise à jour de l'horloge vectorielle locale
+			vcStr := format.Findval(msg, "vector_clock", c.GetName())
+			recvVC, err := utils.DeserializeVectorClock(vcStr)
+			if err != nil {
+				format.Display(format.Format_e(c.GetName(), "HandleMessage()", "Erreur parsing vector_clock: "+err.Error()))
+				return nil
+			}
+			for i := 0; i < len(c.vectorClock); i++ {
+				c.vectorClock[i] = utils.Max(c.vectorClock[i], recvVC[i])
+			}
+			c.vectorClock[c.nodeIndex]++
+
+			// Extraction des données du snapshot
+			sensorID := format.Findval(msg, "sender_name", c.GetName())
+			valuesStr := format.Findval(msg, "content_value", c.GetName())
+			values := utils.ParseFloatArray(valuesStr)
+
+			// Enregistrement du snapshot
+			c.mu.Lock()
+			c.receivedSnapshots[sensorID] = SnapshotData{
+				VectorClock: recvVC,
+				Values:      values,
+			}
+			c.mu.Unlock()
+
+			// Vérifie si tous les capteurs ont répondu
+			sensorNames := c.getSensorNames() // Fonction à ajouter : filtre les knownSiteNames pour ne garder que ceux qui commencent par "sensor"
+			if len(c.receivedSnapshots) == len(sensorNames) {
+				go c.CheckSnapshotCoherence() // méthode que tu dois avoir déjà codée
+			}
 		}
+
 	} else if msg_destination == "verifiers" && c.child.Type() == "verifier" {
 		// The msg is for the child app layer (which is a verifier)
 		// Send to child app through channel 
@@ -293,8 +367,8 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		// The msg is directly for the child app layer
 		// Send to child app through channel
 		c.SendMsg(msg, true) // through channel
-
 	} else {
+		
 		switch msg_type {
 		case "pear_discovery_answer":
 			// Here, a node receives the answer (name) of another node.
@@ -335,16 +409,22 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 }
 
 // AddNewMessageId adds an entry in the seenIDs to remember
-// that the control layer saw this message. 
+// that the control layer saw this message.
 func (c *ControlLayer) AddNewMessageId(sender_name string, MID_str string) {
 	msg_NbMessageSent, err := utils.MIDFromString(MID_str)
 	if err != nil {
-		format.Display(format.Format_e("AddNewMessageID()", c.GetName(), "Error in message id: " + err.Error()))
+		format.Display(format.Format_e("AddNewMessageID()", c.GetName(), "Error in message id: "+err.Error()))
 	}
 	
 	c.mu.Lock()
 	c.IDWatcher.AddMIDToNode(sender_name, msg_NbMessageSent)
 	c.mu.Unlock()
+}
+
+func (c *ControlLayer) InitVectorClockWithSites(sites []string) {
+	c.vectorClock = make([]int, len(sites))
+	c.nodeIndex = utils.FindIndex(c.GetName(), sites)
+	c.vectorClockReady = true
 }
 
 // SendMsgFromApplication is the portal between control layer and application
@@ -365,11 +445,11 @@ func (c *ControlLayer) SendApplicationMsg(msg string) error {
 	return nil
 }
 
-// Send a Message (from this control layer). If is it a propagation, then 
+// Send a Message (from this control layer). If is it a propagation, then
 // set `fixed_clock` to the same clock as received message to propagate.
-func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type string, 
-					msg_type string,destination string, fixed_id string,
-					sender_name_source string) error {
+func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type string,
+	msg_type string, destination string, fixed_id string,
+	sender_name_source string) error {
 	var msg_id string
 	if fixed_id == "" {
 		msg_id = c.GenerateUniqueMessageID()
@@ -404,10 +484,10 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs... bool) {
 		through_channel = through_channelArgs[0]
 	}
 
-	// As this node sends the message, it doens't want to receive 
+	// As this node sends the message, it doens't want to receive
 	// a duplicate => add the message ID to ID watcher
 	var msg_id_str string = format.Findval(msg, "id", c.GetName())
-	var msg_splits [] string = strings.Split(msg_id_str, "_")
+	var msg_splits []string = strings.Split(msg_id_str, "_")
 	var msg_NbMessageSent_str string = msg_splits[len(msg_splits)-1]
 	// The sender can also be the app layer, so check for that:
 	var msg_sender string = format.Findval(msg, "sender_name_source", c.GetName())
@@ -415,19 +495,21 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs... bool) {
 
 	c.mu.Lock()
 	c.clock = c.clock + 1
+	if c.vectorClockReady {
+		c.vectorClock[c.nodeIndex] += 1 // Incrément de l'horloge vectorielle locale
+		msg = format.Replaceval(msg, "vector_clock", utils.SerializeVectorClock(c.vectorClock))
+	}
 	c.mu.Unlock()
 
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clock))
 
 	if through_channel {
 		select {
-		    case c.channel_to_application <- msg:
+		case c.channel_to_application <- msg:
 			// Message sent successfully
-		    case <-time.After(100 * time.Millisecond):
+		case <-time.After(100 * time.Millisecond):
 			format.Display(format.Format_w(c.GetName(), "SendMsg()", "Channel appears to be blocked"))
 		}
-		// Send through channel only, ie. not to the network
-		// c.channel_to_application <- msg
 	} else {
 		format.Msg_send(msg, c.GetName())
 	}
@@ -454,6 +536,7 @@ func (c *ControlLayer) SendPearDiscovery() {
 func (c *ControlLayer) ClosePearDiscovery() {
 	// Append the current nodes name (node responsible of the pear dis.)
 	// as it did not received its own name.
+	c.mu.Lock()
 	c.knownSiteNames = append(c.knownSiteNames, c.GetName())
 	c.nbOfKnownSites += 1
 	if c.child.Type() == "verifier" {
@@ -468,22 +551,30 @@ func (c *ControlLayer) ClosePearDiscovery() {
 	// Display update nb of site as all other nodes will do when receiving:
 	format.Display(format.Format_g(c.GetName(), "ClosePearDis()", "Updated nb sites to " + strconv.Itoa(c.nbOfKnownSites)))
 
+	knownSiteNames := c.knownSiteNames
+	c.mu.Unlock()
+
+	// ✅ Init vector clocks of current control layer & child's
+	c.child.InitVectorClockWithSites(knownSiteNames)
+	c.InitVectorClockWithSites(knownSiteNames)
+
+	// Send final sealing message with control names + verifier names
 	c.SendControlMsg(msg_content, "siteNames", "pear_discovery_sealing", "control", "", c.GetName())
 }
 
-// Return true if the message's ID is contained with 
+// Return true if the message's ID is contained with
 // one of the controler's ID pairs. If it is not contains,
-// it adds it to the interval (see utils.message_watch) 
+// it adds it to the interval (see utils.message_watch)
 // and return false.
 func (c *ControlLayer) SawThatMessageBefore(msg string) bool {
 	var msg_id_str string = format.Findval(msg, "id", c.GetName())
 
-	var msg_splits [] string = strings.Split(msg_id_str, "_")
+	var msg_splits []string = strings.Split(msg_id_str, "_")
 	var msg_NbMessageSent_str string = msg_splits[len(msg_splits)-1]
 
 	msg_NbMessageSent, err := utils.MIDFromString(msg_NbMessageSent_str)
 	if err != nil {
-		format.Display(format.Format_e("SawThatMessageBefore()", c.GetName(), "Error in message id: " + err.Error()))
+		format.Display(format.Format_e("SawThatMessageBefore()", c.GetName(), "Error in message id: "+err.Error()))
 	}
 
 	var sender_name string = format.Findval(msg, "sender_name_source", c.GetName())
@@ -498,4 +589,119 @@ func (c *ControlLayer) SawThatMessageBefore(msg string) bool {
 	c.mu.Unlock()
 	// Saw that message before as it is contained in intervals:
 	return true
+}
+
+func (c *ControlLayer) RequestSnapshot() {
+	msgID := c.GenerateUniqueMessageID()
+	msg := format.Msg_format_multi(format.Build_msg_args(
+		"id", msgID,
+		"type", "snapshot_request",
+		"sender_name", c.GetName(),
+		"sender_name_source", c.GetName(),
+		"sender_type", "control",
+		"destination", "applications", // pour que le msg soit traité par tous les capteurs via control layers
+		"clk", "", // Is done in c.SendMsg
+		"vector_clock", "", // Is done in c.SendMsg
+		"content_type", "request_type",
+		"content_value", "snapshot_start",
+	))
+
+	c.SendMsg(msg)
+}
+
+func (c *ControlLayer) CheckSnapshotCoherence() {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	ids := []string{}
+	for id := range c.receivedSnapshots {
+		ids = append(ids, id)
+	}
+
+	for i := 0; i < len(ids); i++ {
+		for j := 0; j < len(ids); j++ {
+			if i == j {
+				continue
+			}
+			vi := c.receivedSnapshots[ids[i]].VectorClock
+			vj := c.receivedSnapshots[ids[j]].VectorClock
+
+			// Test de cohérence
+			if !utils.VectorClockCompatible(vi, vj) {
+				format.Display(format.Format_e(
+					c.GetName(), "CheckSnapshotCoherence()",
+					"❌ Incohérence détectée entre "+ids[i]+" et "+ids[j],
+				))
+				return
+			}
+		}
+	}
+
+	format.Display(format.Format_d(
+		c.GetName(), "CheckSnapshotCoherence()",
+		"✅ Tous les snapshots sont cohérents !",
+	))
+	c.PrintSnapshotsTable()
+	c.SaveSnapshotToCSV()
+}
+
+func (c *ControlLayer) getSensorNames() []string {
+	sensors := []string{}
+	for _, name := range c.knownSiteNames {
+		if strings.HasPrefix(name, "sensor") {
+			sensors = append(sensors, name)
+		}
+	}
+	return sensors
+}
+
+func (c *ControlLayer) PrintSnapshotsTable() {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	fmt.Println()
+	fmt.Println("📦  Snapshots reçus (" + strconv.Itoa(len(c.receivedSnapshots)) + " capteurs)")
+	fmt.Println("────────────────────────────────────────────────────────────")
+	fmt.Printf("| %-15s | %-22s | %-15s |\n", "Capteur", "Horloge vectorielle", "Valeurs")
+	fmt.Println("────────────────────────────────────────────────────────────")
+
+	for sensor, snapshot := range c.receivedSnapshots {
+		vcStr := fmt.Sprintf("%v", snapshot.VectorClock)
+		valStr := fmt.Sprintf("%v", snapshot.Values)
+		if len(valStr) > 15 {
+			valStr = valStr[:12] + "..."
+		}
+		fmt.Printf("| %-15s | %-22s | %-15s |\n", sensor, vcStr, valStr)
+	}
+
+	fmt.Println("────────────────────────────────────────────────────────────")
+	fmt.Println()
+}
+
+func (c *ControlLayer) SaveSnapshotToCSV() {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// Nom dynamique basé sur l’horloge Lamport du contrôleur
+	filename := fmt.Sprintf("snapshot_%d.csv", c.clock)
+
+	file, err := os.Create(filename)
+	if err != nil {
+		fmt.Printf("❌ Erreur création fichier %s: %v\n", filename, err)
+		return
+	}
+	defer file.Close()
+
+	// Écrire l’en-tête
+	_, _ = file.WriteString("Capteur,HorlogeVectorielle,Valeurs\n")
+
+	// Écrire chaque ligne
+	for sensor, snapshot := range c.receivedSnapshots {
+		vcStr := strings.ReplaceAll(fmt.Sprint(snapshot.VectorClock), " ", "")
+		valStr := strings.ReplaceAll(fmt.Sprint(snapshot.Values), " ", "")
+		line := fmt.Sprintf("%s,\"%s\",\"%s\"\n", sensor, vcStr, valStr)
+		_, _ = file.WriteString(line)
+	}
+
+	fmt.Printf("📁 État global sauvegardé dans %s\n", filename)
 }

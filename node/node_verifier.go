@@ -1,9 +1,11 @@
 package node
 
 import (
+	// "fmt"
 	"strconv"
 	"sync"
 	"time"
+	"os"
 	"distributed_system/format"
 	"distributed_system/utils"
 	"distributed_system/models"
@@ -95,6 +97,11 @@ func (v *VerifierNode) Start() error {
 	return nil
 }
 
+func (v *VerifierNode) InitVectorClockWithSites(sites []string) {
+	v.vectorClock = make([]int, len(sites))
+	v.nodeIndex = utils.FindIndex(v.ctrlLayer.GetName(), sites)
+}
+
 // HandleMessage processes incoming messages from control app
 func (v *VerifierNode) HandleMessage(channel chan string) {
 	    defer func() {
@@ -155,7 +162,19 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			})
 			
 			v.recentReadings[msg_sender] = queue // Update the map
+
+			// Définir le code d'état
+			var stateCode int
+			if float32(readingVal) > v.threshold || float32(readingVal) < -v.threshold {
+				stateCode = 2 // invalid
+			} else {
+				stateCode = 1 // valid
+			}
+
 			v.mutex.Unlock()
+
+			// Sauvegarde dans le fichier log
+			v.logReceivedReading(msg_sender, readingVal, stateCode)
 
 			
 		case "lock_request":
@@ -205,7 +224,6 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 	}
 
 }
-
 
 func (v *VerifierNode) removeAllExistenceOfReading(readingID string) {
 	// Remove all occurrences of the readingID from the verifiedItemIDs map
@@ -833,3 +851,18 @@ func (v *VerifierNode) isItemInReadings(itemID string) (bool, error) {
 	return false, nil
 }
 // ====================== END OF MODEL `READING` LOGIC ======================
+
+func (v *VerifierNode) logReceivedReading(sender string, temperature float64, stateCode int) {
+	filename := "node_" + v.ID() + ".log"
+
+	line := "/" + "timestamp=" + time.Now().Format(time.RFC3339) +
+		"/from=" + sender +
+		"/temp=" + strconv.FormatFloat(temperature, 'f', 2, 64) +
+		"/state=" + strconv.Itoa(stateCode) + "\n"
+
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		defer f.Close()
+		f.WriteString(line)
+	}
+}

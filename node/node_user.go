@@ -71,6 +71,11 @@ func (u *UserNode) Start() error {
 	return nil
 }
 
+func (u *UserNode) InitVectorClockWithSites(sites []string) {
+	u.vectorClock = make([]int, len(sites))
+	u.nodeIndex = utils.FindIndex(u.ctrlLayer.GetName(), sites)
+}
+
 // HandleMessage processes incoming messages from control layer
 func (u *UserNode) HandleMessage(channel chan string) {
 
@@ -700,3 +705,4 @@ func (u *UserNode) handleAPIData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
+
