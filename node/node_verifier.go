@@ -1,7 +1,7 @@
 package node
 
 import (
-	"fmt"
+	// "fmt"
 	"strconv"
 	"time"
 
@@ -111,43 +111,43 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			// Sauvegarde dans le fichier log
 			v.logReceivedReading(msg_sender, readingVal, stateCode)
 
-		case "snapshot_response":
-			fmt.Println("[VerifierNode] ✅ snapshot_response reçu")
-			// 🔁 Mise à jour du vector clock
-			vcStr := format.Findval(msg, "vector_clock", v.GetName())
-			recvVC, err := utils.DeserializeVectorClock(vcStr)
-			if err == nil {
-				for i := 0; i < len(v.vectorClock); i++ {
-					v.vectorClock[i] = utils.Max(v.vectorClock[i], recvVC[i])
-				}
-				v.vectorClock[v.nodeIndex] += 1
-			}
-
-			// Extraire infos
-			snapshotData := format.Findval(msg, "content_value", v.GetName())
-			sensorID := format.Findval(msg, "sender_name", v.GetName())
-			originalRequester := format.Findval(msg, "sender_name_source", v.GetName()) // le UserNode !
-
-			//(plus tard : vérifier cohérence)
-			format.Display(format.Format_d(v.GetName(), "HandleMessage()", "Received snapshot from "+sensorID+" → "+snapshotData))
-
-			// Construire message de réponse
-			msgID := v.GenerateUniqueMessageID()
-			response := format.Msg_format_multi(format.Build_msg_args(
-				"id", msgID,
-				"type", "snapshot_verified",
-				"sender_name", v.GetName(),
-				"sender_name_source", v.GetName(),
-				"sender_type", v.Type(),
-				"destination", originalRequester, // vers UserNode qui a demandé
-				"clk", strconv.Itoa(v.clock),
-				"vector_clock", utils.SerializeVectorClock(v.vectorClock),
-				"content_type", "status",
-				"content_value", "valid snapshot from "+sensorID,
-			))
-
-			// Envoi vers UserNode
-			v.ctrlLayer.SendApplicationMsg(response)
+		// case "snapshot_response":
+		// 	fmt.Println("[VerifierNode] ✅ snapshot_response reçu")
+		// 	// 🔁 Mise à jour du vector clock
+		// 	vcStr := format.Findval(msg, "vector_clock", v.GetName())
+		// 	recvVC, err := utils.DeserializeVectorClock(vcStr)
+		// 	if err == nil {
+		// 		for i := 0; i < len(v.vectorClock); i++ {
+		// 			v.vectorClock[i] = utils.Max(v.vectorClock[i], recvVC[i])
+		// 		}
+		// 		v.vectorClock[v.nodeIndex] += 1
+		// 	}
+		//
+		// 	// Extraire infos
+		// 	snapshotData := format.Findval(msg, "content_value", v.GetName())
+		// 	sensorID := format.Findval(msg, "sender_name", v.GetName())
+		// 	originalRequester := format.Findval(msg, "sender_name_source", v.GetName()) // le UserNode !
+		//
+		// 	//(plus tard : vérifier cohérence)
+		// 	format.Display(format.Format_d(v.GetName(), "HandleMessage()", "Received snapshot from "+sensorID+" → "+snapshotData))
+		//
+		// 	// Construire message de réponse
+		// 	msgID := v.GenerateUniqueMessageID()
+		// 	response := format.Msg_format_multi(format.Build_msg_args(
+		// 		"id", msgID,
+		// 		"type", "snapshot_verified",
+		// 		"sender_name", v.GetName(),
+		// 		"sender_name_source", v.GetName(),
+		// 		"sender_type", v.Type(),
+		// 		"destination", originalRequester, // vers UserNode qui a demandé
+		// 		"clk", strconv.Itoa(v.clock),
+		// 		"vector_clock", utils.SerializeVectorClock(v.vectorClock),
+		// 		"content_type", "status",
+		// 		"content_value", "valid snapshot from "+sensorID,
+		// 	))
+		//
+		// 	// Envoi vers UserNode
+		// 	v.ctrlLayer.SendApplicationMsg(response)
 
 		}
 	}

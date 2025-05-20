@@ -294,3 +294,9 @@
 /id=sensor_0_2/type=new_reading/sender_name=sensor (0)/sender_name_source=sensor (0)/sender_type=sensor/destination=applications/clk=3/vector_clock=0,0,3/content_type=sensor_reading/content_value=28.333523
 /id=sensor_0_3/type=new_reading/sender_name=sensor (0)/sender_name_source=sensor (0)/sender_type=sensor/destination=applications/clk=4/vector_clock=1,0,6/content_type=sensor_reading/content_value=26.784803
 /id=sensor_0_4/type=new_reading/sender_name=sensor (0)/sender_name_source=sensor (0)/sender_type=sensor/destination=applications/clk=5/vector_clock=1,0,7/content_type=sensor_reading/content_value=16.610462
+/id=sensor_0_0/type=new_reading/sender_name=sensor (0)/sender_name_source=sensor (0)/sender_type=sensor/destination=applications/clk=1/vector_clock=0,0,1/content_type=sensor_reading/content_value=23.108189
+/id=sensor_0_1/type=new_reading/sender_name=sensor (0)/sender_name_source=sensor (0)/sender_type=sensor/destination=applications/clk=2/vector_clock=0,0,2/content_type=sensor_reading/content_value=28.440302
+/id=sensor_0_2/type=new_reading/sender_name=sensor (0)/sender_name_source=sensor (0)/sender_type=sensor/destination=applications/clk=3/vector_clock=0,0,11/content_type=sensor_reading/content_value=21.681568
+/id=sensor_0_0/type=new_reading/sender_name=sensor (0)/sender_name_source=sensor (0)/sender_type=sensor/destination=applications/clk=1/vector_clock=0,0,1/content_type=sensor_reading/content_value=15.037105
+/id=sensor_0_1/type=new_reading/sender_name=sensor (0)/sender_name_source=sensor (0)/sender_type=sensor/destination=applications/clk=2/vector_clock=0,0,2/content_type=sensor_reading/content_value=21.868898
+/id=sensor_0_4/type=new_reading/sender_name=sensor (0)/sender_name_source=sensor (0)/sender_type=sensor/destination=applications/clk=3/vector_clock=0,0,12/content_type=sensor_reading/content_value=19.96307

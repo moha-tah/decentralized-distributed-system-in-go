@@ -174,7 +174,6 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 		for msg := range channel {
 			// 🔎 Identifier le type de message
 			msgType := format.Findval(msg, "type", s.GetName())
-			format.Display(format.Format_e(s.GetName(), "HandleMessage()", "TYPE OF MESSAGE: "+msgType))
 
 			// 🔁 Mettre à jour le vector clock à la réception
 			vcStr := format.Findval(msg, "vector_clock", s.GetName())
@@ -217,7 +216,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 					"sender_name", originalRequester,
 					"sender_name_source", s.GetName(),
 					"sender_type", s.Type(),
-					"destination", "verifier (1)", // Pour l'instant : broadcast ; à terme, vers un verifier
+					"destination", format.Findval(msg, "sender_name_source", s.GetName()),
 					"clk", strconv.Itoa(s.clock),
 					"vector_clock", utils.SerializeVectorClock(s.vectorClock),
 					"content_type", "snapshot_data",
@@ -227,8 +226,11 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 				// 🗂️ Log optionnel
 				format.Display(format.Format_d(s.GetName(), "HandleMessage()", "Sending snapshot_response: "+readingsStr))
 
-				// 📤 Envoi du message via control layer
 				s.ctrlLayer.SendApplicationMsg(msgResponse)
+				// Envoi vers couche application
+				if s.ctrlLayer.SendApplicationMsg(msg) == nil {
+					s.nbMsgSent = s.nbMsgSent + 1
+				}
 			}
 		}
 }

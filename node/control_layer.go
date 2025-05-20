@@ -4,6 +4,7 @@ import (
 	"bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
 	"distributed_system/format"
 	"distributed_system/utils"
+	"fmt"
 	"os" // Use for the bufio reader: reads from os stdin
 	"strconv"
 	"strings"
@@ -16,7 +17,12 @@ type ControlLayer struct {
 	id        string
 	nodeType  string
 	isRunning bool
+
 	clock     int
+	vectorClockReady bool // true when nbOfKnownSites is set
+	vectorClock []int // Size = nbOfKnownSites when init.
+	nodeIndex   int   // position of this node in the vector
+
 	child     Node
 	nbMsgSent uint64
 	// Seen IDs of all received messages:
@@ -89,6 +95,14 @@ func (c *ControlLayer) Start() error {
 	}
 
 	c.isRunning = true
+
+	// ⚡ Lancer une requête snapshot après un petit délai
+	go func() {
+		time.Sleep(5 * time.Second) // attendre que tout soit initialisé
+		format.Display(format.Format_d("Start()", c.GetName(), "⏳ 5s écoulées, envoi de la requête snapshot..."))
+		c.RequestSnapshot()
+		format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
+	}()
 
 	go func() {
 
@@ -204,14 +218,20 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		case "pear_discovery_sealing":
 
 			if !c.pearDiscoverySealed {
+
+				c.mu.Lock()
 				c.pearDiscoverySealed = true
 
 				var names_in_message string = format.Findval(msg, "content_value", c.GetName())
 				c.knownSiteNames = strings.SplitN(names_in_message, "@", -1)
 				c.nbOfKnownSites = len(c.knownSiteNames)
+				knownSiteNames := c.knownSiteNames
+				c.mu.Unlock()
+
 
 				// ✅ INITIALISATION DU VECTEUR DANS L’ENFANT
-				c.child.InitVectorClockWithSites(c.knownSiteNames)
+				c.child.InitVectorClockWithSites(knownSiteNames)
+				c.InitVectorClockWithSites(knownSiteNames)
 
 				format.Display(format.Format_e(
 					c.GetName(), "HandleMsg()",
@@ -240,7 +260,66 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				c.knownSiteNames = append(c.knownSiteNames, newSiteName)
 				c.nbOfKnownSites += 1
 			}
+		
+		case "snapshot_response":
+			fmt.Println("[VerifierNode] ✅ snapshot_response reçu")
+			// 🔁 Mise à jour du vector clock
+			vcStr := format.Findval(msg, "vector_clock", c.GetName())
+			recvVC, err := utils.DeserializeVectorClock(vcStr)
+			if err == nil {
+				for i := 0; i < len(c.vectorClock); i++ {
+					c.vectorClock[i] = utils.Max(c.vectorClock[i], recvVC[i])
+				}
+				c.vectorClock[c.nodeIndex] += 1
+			}
+
+			// Extraire infos
+			snapshotData := format.Findval(msg, "content_value", c.GetName())
+			sensorID := format.Findval(msg, "sender_name", c.GetName())
+
+			//(plus tard : vérifier cohérence)
+			format.Display(format.Format_d(c.GetName(), "HandleMessage()", "Received snapshot from "+sensorID+" → "+snapshotData))
+
+		// 	// Construire message de réponse
+			// originalRequester := format.Findval(msg, "sender_name_source", c.GetName()) // le UserNode !
+		// 	msgID := c.GenerateUniqueMessageID()
+		// 	response := format.Msg_format_multi(format.Build_msg_args(
+		// 		"id", msgID,
+		// 		"type", "snapshot_verified",
+		// 		"sender_name", c.GetName(),
+		// 		"sender_name_source", c.GetName(),
+		// 		"sender_type", "control",
+		// 		"destination", originalRequester, // vers UserNode qui a demandé
+		// 		"clk", "", // Is done in c.SendMsg
+		// 		"vector_clock", "", // Is done in c.SendMsg
+		// 		"content_type", "status",
+		// 		"content_value", "valid snapshot from "+sensorID,
+		// 	))
+		// 	c.SendMsg(response)
+		//
+		// case "snapshot_verified":
+			format.Display(format.Format_e(c.GetName(), "HandleMessage()", "Snapshot verified received from "+sender_name_source))
+			sensor := format.Findval(msg, "sender_name_source", c.GetName())
+			snapshot := format.Findval(msg, "content_value", c.GetName())
+			vc := format.Findval(msg, "vector_clock", c.GetName())
+
+			// Couleurs ANSI
+			green := "\033[32m"
+			blue := "\033[34m"
+			yellow := "\033[33m"
+			reset := "\033[0m"
+			bold := "\033[1m"
+
+			fmt.Println()
+			fmt.Println(bold + green + "📦  Snapshot Vérifié Reçu" + reset)
+			fmt.Println(bold + "──────────────────────────────────────────────" + reset)
+			fmt.Printf("📍 %sCapteur%s        : %s%s%s\n", blue, reset, yellow, sensor, reset)
+			fmt.Printf("🧪 %sValeurs%s        : %s%s%s\n", blue, reset, yellow, snapshot, reset)
+			fmt.Printf("🕒 %sHorloge vectorielle%s : %s%s%s\n", blue, reset, yellow, vc, reset)
+			fmt.Println(bold + "──────────────────────────────────────────────" + reset)
+			fmt.Println()
 		}
+
 	} else {
 		switch msg_type {
 		case "pear_discovery_answer":
@@ -279,6 +358,14 @@ func (c *ControlLayer) AddNewMessageId(sender_name string, MID_str string) {
 	}
 	c.IDWatcher.AddMIDToNode(sender_name, msg_NbMessageSent)
 }
+
+
+func (c *ControlLayer) InitVectorClockWithSites(sites []string) {
+	c.vectorClock = make([]int, len(sites))
+	c.nodeIndex = utils.FindIndex(c.GetName(), sites)
+	c.vectorClockReady = true
+}
+
 
 // SendMsgFromApplication is the portal between control layer and application
 // layer: the app layer asks the control layer to send a message to the network.
@@ -345,6 +432,10 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs... bool) {
 
 	c.mu.Lock()
 	c.clock = c.clock + 1
+	if c.vectorClockReady {
+		c.vectorClock[c.nodeIndex] += 1 // Incrément de l'horloge vectorielle locale
+		msg = format.Replaceval(msg, "vector_clock", utils.SerializeVectorClock(c.vectorClock))
+	}
 	c.mu.Unlock()
 
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clock))
@@ -383,9 +474,14 @@ func (c *ControlLayer) SendPearDiscovery() {
 func (c *ControlLayer) ClosePearDiscovery() {
 	// Append the current nodes name (node responsible of the pear dis.)
 	// as it did not received its own name.
+	c.mu.Lock()
 	c.knownSiteNames = append(c.knownSiteNames, c.GetName())
-	c.child.InitVectorClockWithSites(c.knownSiteNames)
 	c.nbOfKnownSites += 1
+	knownSiteNames := c.knownSiteNames
+	c.mu.Unlock()
+	// ✅ INITIALISATION DU VECTEUR DANS L’ENFANT
+	c.child.InitVectorClockWithSites(knownSiteNames)
+	c.InitVectorClockWithSites(knownSiteNames)
 
 	// Display update nb of site as all other nodes will do when receiving:
 	format.Display(format.Format_e(c.GetName(), "ClosePearDis()", "Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
@@ -418,4 +514,23 @@ func (c *ControlLayer) SawThatMessageBefore(msg string) bool {
 	}
 	// Saw that message before as it is contained in intervals:
 	return true
+}
+
+
+func (c *ControlLayer) RequestSnapshot() {
+	msgID := c.GenerateUniqueMessageID()
+	msg := format.Msg_format_multi(format.Build_msg_args(
+		"id", msgID,
+		"type", "snapshot_request",
+		"sender_name", c.GetName(),
+		"sender_name_source", c.GetName(),
+		"sender_type", "control",
+		"destination", "applications", // pour que le msg soit traité par tous les capteurs via control layers
+		"clk", "", // Is done in c.SendMsg
+		"vector_clock", "", // Is done in c.SendMsg
+		"content_type", "request_type",
+		"content_value", "snapshot_start",
+	))
+
+	c.SendMsg(msg)
 }
