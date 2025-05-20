@@ -25,7 +25,7 @@ type Node interface {
 	GetName() string
 
 	// SetControlLayer is used to transmit information to other nodes
-	SetControlLayer(ControlLayer) error
+	SetControlLayer(*ControlLayer) error
 
 	// InitVectorClockWithSites initializes the vector clock with the given site names
 	InitVectorClockWithSites(siteNames []string)
@@ -37,7 +37,7 @@ type BaseNode struct {
 	nodeType    string
 	isRunning   bool
 	clock       int
-	ctrlLayer   ControlLayer
+	ctrlLayer   *ControlLayer
 	nbMsgSent   int
 	vectorClock []int // taille = nombre total de noeuds
 	nodeIndex   int   // position de ce node dans le vecteur
@@ -76,7 +76,7 @@ func (n *BaseNode) GetControlName() string {
 	return "control (" + n.id + "_control)"
 }
 
-func (n *BaseNode) SetControlLayer(c ControlLayer) error {
+func (n *BaseNode) SetControlLayer(c *ControlLayer) error {
 	n.ctrlLayer = c
 	return nil
 }

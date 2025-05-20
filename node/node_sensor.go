@@ -42,46 +42,49 @@ func (s *SensorNode) Start() error {
 		"Starting sensor node "+s.GetName()))
 
 	s.isRunning = true
+	
+	go func() {
+		for {
+			s.clock = s.clock + 1
 
-	for {
-		s.clock = s.clock + 1
+			// ✅ Incrémenter l’horloge vectorielle locale
+			s.vectorClock[s.nodeIndex] += 1
 
-		// ✅ Incrémenter l’horloge vectorielle locale
-		s.vectorClock[s.nodeIndex] += 1
+			// Générer une lecture
+			reading := s.generateReading()
 
-		// Générer une lecture
-		reading := s.generateReading()
+			// ✅ Stocker dans le FIFO local
+			if len(s.recentReadings) >= 15 {
+				s.recentReadings = s.recentReadings[1:]
+			}
+			s.recentReadings = append(s.recentReadings, float32(reading.Temperature))
 
-		// ✅ Stocker dans le FIFO local
-		if len(s.recentReadings) >= 15 {
-			s.recentReadings = s.recentReadings[1:]
+			// Créer le message
+			msg_id := s.GenerateUniqueMessageID()
+			msg := format.Msg_format_multi(format.Build_msg_args(
+				"id", msg_id,
+				"type", "new_reading",
+				"sender_name", s.GetName(),
+				"sender_name_source", s.GetName(),
+				"sender_type", s.Type(),
+				"destination", "applications",
+				"clk", strconv.Itoa(s.clock),
+				"content_type", "sensor_reading",
+				"content_value", strconv.FormatFloat(reading.Temperature, 'f', -1, 32),
+				"vector_clock", utils.SerializeVectorClock(s.vectorClock),
+			))
+
+			s.logFullMessage(msg_id, reading)
+
+			// Envoi vers couche application
+			if s.ctrlLayer.SendApplicationMsg(msg) == nil {
+				s.nbMsgSent = s.nbMsgSent + 1
+			}
+
+			time.Sleep(2 * time.Second)
 		}
-		s.recentReadings = append(s.recentReadings, float32(reading.Temperature))
-
-		// Créer le message
-		msg_id := s.GenerateUniqueMessageID()
-		msg := format.Msg_format_multi(format.Build_msg_args(
-			"id", msg_id,
-			"type", "new_reading",
-			"sender_name", s.GetName(),
-			"sender_name_source", s.GetName(),
-			"sender_type", s.Type(),
-			"destination", "applications",
-			"clk", strconv.Itoa(s.clock),
-			"content_type", "sensor_reading",
-			"content_value", strconv.FormatFloat(reading.Temperature, 'f', -1, 32),
-			"vector_clock", utils.SerializeVectorClock(s.vectorClock),
-		))
-
-		s.logFullMessage(msg_id, reading)
-
-		// Envoi vers couche application
-		if s.ctrlLayer.SendApplicationMsg(msg) == nil {
-			s.nbMsgSent = s.nbMsgSent + 1
-		}
-
-		time.Sleep(2 * time.Second)
-	}
+	}()
+	select {} // Block forever
 }
 
 // generateReading produces a simulated temperature reading
@@ -168,8 +171,10 @@ func (s *SensorNode) logFullMessage(msg_id string, reading models.Reading) {
 func (s *SensorNode) ID() string   { return s.id }
 func (s *SensorNode) Type() string { return s.nodeType }
 func (s *SensorNode) HandleMessage(channel chan string) {
-	go func() {
 		for msg := range channel {
+			// 🔎 Identifier le type de message
+			msgType := format.Findval(msg, "type", s.GetName())
+			format.Display(format.Format_e(s.GetName(), "HandleMessage()", "TYPE OF MESSAGE: "+msgType))
 
 			// 🔁 Mettre à jour le vector clock à la réception
 			vcStr := format.Findval(msg, "vector_clock", s.GetName())
@@ -181,8 +186,6 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 				s.vectorClock[s.nodeIndex] += 1
 			}
 
-			// 🔎 Identifier le type de message
-			msgType := format.Findval(msg, "type", s.GetName())
 
 			switch msgType {
 
@@ -228,5 +231,4 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 				s.ctrlLayer.SendApplicationMsg(msgResponse)
 			}
 		}
-	}()
 }

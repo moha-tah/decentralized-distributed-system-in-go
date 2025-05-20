@@ -105,6 +105,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 			log.Printf("%s: Current readings queue for %s: %v", u.GetName(), msg_sender, queue)
 
 		case "snapshot_verified":
+			format.Display(format.Format_e(u.GetName(), "HandleMessage()", "Snapshot verified received from "+msg_sender))
 			sensor := format.Findval(msg, "sender_name_source", u.GetName())
 			snapshot := format.Findval(msg, "content_value", u.GetName())
 			vc := format.Findval(msg, "vector_clock", u.GetName())

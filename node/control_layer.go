@@ -7,11 +7,12 @@ import (
 	"os" // Use for the bufio reader: reads from os stdin
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type ControlLayer struct {
-	// mu   	  sync.RWMutex
+	mu   	  sync.RWMutex
 	id        string
 	nodeType  string
 	isRunning bool
@@ -45,7 +46,7 @@ func NewControlLayer(id string, child Node) *ControlLayer {
 		child:                  child,
 		nbMsgSent:              0,
 		IDWatcher:              utils.NewMIDWatcher(),
-		channel_to_application: make(chan string),
+		channel_to_application: make(chan string, 10),
 		nbOfKnownSites:         0,
 		sentDiscoveryMessage:   false,
 		pearDiscoverySealed:    false,
@@ -57,7 +58,8 @@ func (c *ControlLayer) Start() error {
 	format.Display(format.Format_d("Start()", "control_layer.go", "Starting control layer "+c.GetName()))
 
 	// Notify child that this is its control layer it must talk to.
-	c.child.SetControlLayer(*c)
+	c.child.SetControlLayer(c)
+	go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
 
 	// TODO idea to know how many nodes exists:
 	// We can not send the pear discovery message RIGHT AT startup: other nodes won't be
@@ -76,7 +78,6 @@ func (c *ControlLayer) Start() error {
 
 			// Start the child only after
 			c.child.Start()
-			go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
 		}()
 	} else {
 		go func() { // Wake up child only after pear discovery is finished
@@ -84,7 +85,6 @@ func (c *ControlLayer) Start() error {
 
 			// Notify the child that its control layer has been created
 			c.child.Start()
-			go c.child.HandleMessage(c.channel_to_application) // Msg to application will be send through channel
 		}()
 	}
 
@@ -145,7 +145,8 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		case "new_reading":
 			// Send to child app
 			// c.child.HandleMessage(msg)
-			c.channel_to_application <- msg // through channel
+			// c.channel_to_application <- msg // through channel
+			c.SendMsg(msg, true)
 
 			format.Display(format.Format_d(
 				c.GetName(), "HandleMessage()",
@@ -154,26 +155,27 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			propagate_msg = true
 
 		case "snapshot_request":
-			c.channel_to_application <- msg
+			// c.channel_to_application <- msg
+			c.SendMsg(msg, true)
 			format.Display(format.Format_d(
 				c.GetName(), "HandleMessage()",
 				"📥 snapshot_request reçu depuis "+sender_name_source))
 			propagate_msg = true
 		}
 
-		if propagate_msg { // propagate to applications
-			// TODO: is it appropriate to do it that way?
-			// msg is comming from a distant app layer, and we need
-			// to propagate to other distant apps, so we use the below
-			// function, even though is was thought as a function
-			// that does localapp => send to other. It can be used as both.
-
-			// As it is a propagation, use the same msg_id as in received msg:
-			var msg_id string = format.Findval(msg, "id", c.GetName())
-
-			c.SendControlMsg(msg_content_value, format.Findval(msg, "content_type", c.GetName()),
-				msg_type, msg_destination, msg_id, sender_name_source)
-		}
+		// if propagate_msg { // propagate to applications
+		// 	// TODO: is it appropriate to do it that way?
+		// 	// msg is comming from a distant app layer, and we need
+		// 	// to propagate to other distant apps, so we use the below
+		// 	// function, even though is was thought as a function
+		// 	// that does localapp => send to other. It can be used as both.
+		//
+		// 	// As it is a propagation, use the same msg_id as in received msg:
+		// 	var msg_id string = format.Findval(msg, "id", c.GetName())
+		//
+		// 	c.SendControlMsg(msg_content_value, format.Findval(msg, "content_type", c.GetName()),
+		// 		msg_type, msg_destination, msg_id, sender_name_source)
+		// }
 
 	} else if msg_destination == "control" {
 		// Control logic operations
@@ -256,6 +258,15 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		}
 	}
 
+	// Propagate the message to other nodes if needed
+	if propagate_msg { 
+		// As it is a propagation, use the same msg_id as in received msg 
+		// so no id modification.
+		propagate_msg := format.Replaceval(msg, "sender_name", c.GetName())
+		propagate_msg = format.Replaceval(msg, "sender_type", "control")
+		c.SendMsg(propagate_msg)
+	}
+
 	return nil
 }
 
@@ -278,7 +289,9 @@ func (c *ControlLayer) SendApplicationMsg(msg string) error {
 	var rcv_clk string = format.Findval(msg, "clk", c.GetName())
 	rcv_clk_int, _ := strconv.Atoi(rcv_clk)
 
+	c.mu.Lock()
 	c.clock = utils.Synchronise(c.clock, rcv_clk_int)
+	c.mu.Unlock()
 
 	c.SendMsg(msg)
 
@@ -315,23 +328,42 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 }
 
 // Sending action
-func (c *ControlLayer) SendMsg(msg string) {
+func (c *ControlLayer) SendMsg(msg string, through_channelArgs... bool) {
+	through_channel := false
+	if len(through_channelArgs) > 0 {
+		through_channel = through_channelArgs[0]
+	}
 
-	// As this node sends the message, it doens't want to receive
+	// As this node sends the message, it doens't want to receive 
 	// a duplicate => add the message ID to ID watcher
 	var msg_id_str string = format.Findval(msg, "id", c.GetName())
-	var msg_splits []string = strings.Split(msg_id_str, "_")
+	var msg_splits [] string = strings.Split(msg_id_str, "_")
 	var msg_NbMessageSent_str string = msg_splits[len(msg_splits)-1]
 	// The sender can also be the app layer, so check for that:
 	var msg_sender string = format.Findval(msg, "sender_name_source", c.GetName())
 	c.AddNewMessageId(msg_sender, msg_NbMessageSent_str)
 
+	c.mu.Lock()
 	c.clock = c.clock + 1
+	c.mu.Unlock()
 
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clock))
-	format.Msg_send(msg, c.GetName())
 
+	if through_channel {
+		select {
+		    case c.channel_to_application <- msg:
+			format.Display(format.Format_w(c.GetName(), "SendMsg()", "THROUGH CHANNEL ONLY:"+msg))
+			// Message sent successfully
+		    case <-time.After(100 * time.Millisecond):
+			format.Display(format.Format_w(c.GetName(), "SendMsg()", "Channel appears to be blocked"))
+		}
+	} else {
+		format.Msg_send(msg, c.GetName())
+	}
+
+	c.mu.Lock()
 	c.nbMsgSent = c.nbMsgSent + 1
+	c.mu.Unlock()
 
 }
 
