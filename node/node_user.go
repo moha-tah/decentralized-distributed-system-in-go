@@ -6,20 +6,22 @@ import (
 	"distributed_system/utils"
 	"fmt"
 	"log" // Added for logging errors
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	
+
 	// Server and JSON libraries:
+	"encoding/json"
 	"net/http"
 	"time"
-	"encoding/json"
 )
 
 // UserNode represents a user in the system
 type UserNode struct {
 	BaseNode
 	predictionFunc	   func (values []float32, decay float32) float32
+	model	           string		       // Model type (linear or exponential)
 	decayFactor	   float32 		       // Decay factor in some prediction functions
 	lastPrediction     *float32                    // pointer to allow nil value at start
 	recentReadings     map[string][]models.Reading // FIFO queue per sender
@@ -47,6 +49,7 @@ func NewUserNode(id string, model string, port int) *UserNode {
 	return &UserNode{
 		BaseNode:           NewBaseNode(id, "user"),
 		predictionFunc:     predFunction,
+		model:              model,
 		decayFactor:        decayFactor,
 		lastPrediction:     nil,
 		recentReadings:     make(map[string][]models.Reading),
@@ -222,17 +225,32 @@ func (n *UserNode) processDatabse() {
 
 func (n *UserNode) printDatabase() {
 	var debug string = n.GetName()+" database:\n"
+
 	n.mutex.Lock()
-	for sensor, readings := range n.recentReadings {
+
+	// 1. Sort and print readings
+	sensorNames := make([]string, 0, len(n.recentReadings))
+	for sensor := range n.recentReadings {
+		sensorNames = append(sensorNames, sensor)
+	}
+	sort.Strings(sensorNames) // Alphabetical sort
+
+	for _, sensor := range sensorNames {
 		debug += sensor + "\n"
-		for _, r := range readings {
+		for _, r := range n.recentReadings[sensor] {
 			debug += "	" + r.ReadingID +  "  " + fmt.Sprintf("%.2f", r.Temperature) + " verifier:" + r.VerifierID + "\n"
 		}
 	} 
 	
-	// Predictions 
-	for sensor, predictions := range n.recentPredictions {
-		prediction := predictions[len(predictions)-1] // Get the last prediction
+	// 2. Sort and print predictions
+	predictionSensorNames := make([]string, 0, len(n.recentPredictions))
+	for sensor := range n.recentPredictions {
+		predictionSensorNames = append(predictionSensorNames, sensor)
+	}
+	sort.Strings(predictionSensorNames)
+
+	for _, sensor := range predictionSensorNames {
+		prediction := n.recentPredictions[sensor][len(n.recentPredictions[sensor])-1] // latest prediction
 		debug += "Latest prediction for "+sensor+": " + strconv.FormatFloat(float64(prediction), 'f', -1, 32) + "\n"
 	}
 
@@ -278,7 +296,7 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>` + u.GetName() + ` Dashboard</title>
+    <title>` + u.GetName() + ` (` + u.model + `) Dashboard</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -339,23 +357,217 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
         .refresh-button:hover {
             background-color: #45a049;
         }
+
+    .chart-container {
+	height: 550px;
+	margin-bottom: 30px;
+	padding: 15px;
+	background-color: white;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+    }
+
+    .verification-stats {
+        margin-bottom: 30px;
+        padding: 15px;
+        background-color: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+    
+    .stats-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+        margin-top: 10px;
+    }
+    
+    .stat-card {
+        flex: 1;
+        min-width: 200px;
+        padding: 15px;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        text-align: center;
+    }
+    
+    .stat-value {
+        font-size: 2em;
+        font-weight: bold;
+        margin: 10px 0;
+    }
+    
+    .stat-label {
+        font-size: 1.2em;
+        color: #555;
+    }
+    
+    .stat-percentage {
+        font-size: 1em;
+        color: #666;
+    }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>` + u.GetName() + ` Dashboard</h1>
+        <h1>` + u.GetName() + ` (` + u.model + `) Dashboard</h1>
         <button class="refresh-button" onclick="fetchData()">Refresh Data</button>
         <div id="last-updated" class="timestamp"></div>
+	<div class="chart-container">
+	    <h2>Recent Predictions</h2>
+	    <canvas id="predictionsChart"></canvas>
+	</div>
+	<div class="verification-stats">
+	    <h2>Verification Statistics</h2>
+	    <div class="stats-container" id="verification-stats-container">
+		<!-- Stats will be populated here -->
+	    </div>
+	</div>
         <div id="sensors-data"></div>
     </div>
 
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
     <script>
+
+	 // Global chart variable so we can update it
+    let predictionsChart = null;
+
+    function updateChart(data) {
+        const ctx = document.getElementById('predictionsChart').getContext('2d');
+        
+        // Generate colors for each sensor
+        const colorPalette = [
+            'rgba(255, 99, 132, 1)',   // red
+            'rgba(54, 162, 235, 1)',   // blue
+            'rgba(255, 206, 86, 1)',   // yellow
+            'rgba(75, 192, 192, 1)',   // teal
+            'rgba(153, 102, 255, 1)',  // purple
+            'rgba(255, 159, 64, 1)',   // orange
+            'rgba(199, 199, 199, 1)',  // gray
+            'rgba(83, 102, 255, 1)',   // indigo
+            'rgba(255, 99, 255, 1)',   // pink
+            'rgba(99, 255, 132, 1)'    // light green
+        ];
+        
+        // Prepare datasets from predictions
+        const datasets = [];
+        let colorIndex = 0;
+        
+        for (const [sensorId, predictions] of Object.entries(data.predictions)) {
+            if (predictions && predictions.length > 0) {
+                // Generate indices for X-axis (0, 1, 2, ...)
+                const indices = Array.from({ length: predictions.length }, (_, i) => i);
+                
+                datasets.push({
+                    label: sensorId,
+                    data: predictions,
+                    borderColor: colorPalette[colorIndex % colorPalette.length],
+                    backgroundColor: colorPalette[colorIndex % colorPalette.length].replace('1)', '0.2)'),
+                    tension: 0.1,
+                    pointRadius: 3
+                });
+                
+                colorIndex++;
+            }
+        }
+        
+        // If we already have a chart, destroy it before creating a new one
+        if (predictionsChart) {
+            predictionsChart.destroy();
+        }
+        
+        // Create new chart
+        predictionsChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: datasets.length > 0 ? datasets[0].data.map((_, i) => i) : [],
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Prediction Value'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Prediction Index'
+                        }
+                    }
+                },
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Sensor Predictions Over Time'
+                    },
+                    legend: {
+                        position: 'top',
+                    }
+                }
+            }
+        });
+    }
+
+    // function to update verification stats
+    function updateVerificationStats(data) {
+        const statsContainer = document.getElementById('verification-stats-container');
+        statsContainer.innerHTML = '';
+        
+        // Calculate verification stats for each sensor
+        for (const [sensorId, readings] of Object.entries(data.readings)) {
+            if (readings && readings.length > 0) {
+                const totalReadings = readings.length;
+                const verifiedReadings = readings.filter(r => r.IsVerified).length;
+                const verificationPercentage = totalReadings > 0 ? 
+                    Math.round((verifiedReadings / totalReadings) * 100) : 0;
+                
+	        // Generate a color based on verification percentage
+                const hue = verificationPercentage * 1.2; // 0% = red (0), 100% = green (120)
+                const bgColor = 'hsl(' + hue + ', 70%, 90%)';
+                const textColor = 'hsl(' + hue + ', 70%, 30%)';
+                
+                // Create stat card
+                const statCard = document.createElement('div');
+                statCard.className = 'stat-card';
+                statCard.style.backgroundColor = bgColor;
+                statCard.style.borderLeft = '4px solid ' + textColor;
+                
+                const sensorLabel = document.createElement('div');
+                sensorLabel.className = 'stat-label';
+                sensorLabel.textContent = sensorId;
+                
+                const statValue = document.createElement('div');
+                statValue.className = 'stat-value';
+                statValue.textContent = verifiedReadings + ' / ' + totalReadings;
+                statValue.style.color = textColor;
+                
+                const percentageLabel = document.createElement('div');
+                percentageLabel.className = 'stat-percentage';
+                percentageLabel.textContent = verificationPercentage + '% Verified';
+
+                
+                statCard.appendChild(sensorLabel);
+                statCard.appendChild(statValue);
+                statCard.appendChild(percentageLabel);
+                
+                statsContainer.appendChild(statCard);
+            }
+        }
+    }
+
         // Fetch data from the API and update the UI
         function fetchData() {
             fetch('/api/data')
                 .then(response => response.json())
                 .then(data => {
                     updateUI(data);
+		    updateChart(data);
+                    updateVerificationStats(data); 
                 })
                 .catch(error => {
                     console.error('Error fetching data:', error);

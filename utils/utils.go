@@ -1,7 +1,7 @@
 package utils
 
 const VALUES_TO_STORE = 15 // per sensor
-const DECAY_FACTOR = 0.9   // used in Users prediction
+const DECAY_FACTOR = 0.5   // used in Users prediction
 const PearD_SITE_SEPARATOR = "@" // used in pear_discovery msg to separate each site 
 const PearD_VERIFIER_SEPARATOR = "|" // separates the list of ctrl names from the list of verifiers
 
