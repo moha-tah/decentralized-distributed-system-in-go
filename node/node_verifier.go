@@ -110,6 +110,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 
 			// Sauvegarde dans le fichier log
 			v.logReceivedReading(msg_sender, readingVal, stateCode)
+
 		case "snapshot_response":
 			fmt.Println("[VerifierNode] ✅ snapshot_response reçu")
 			// 🔁 Mise à jour du vector clock
