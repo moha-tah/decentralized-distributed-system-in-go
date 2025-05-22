@@ -76,7 +76,7 @@ func NewControlLayer(id string, child Node) *ControlLayer {
 
 // Start begins the control operations
 func (c *ControlLayer) Start() error {
-	format.Display(format.Format_d("Start()", "control_layer.go", "Starting control layer "+c.GetName()))
+	format.Display(format.Format_d(c.GetName(), "Start()", "Starting control layer "+c.GetName()))
 
 	// Notify child that this is its control layer it must talk to.
 	c.child.SetControlLayer(c)
@@ -96,9 +96,9 @@ func (c *ControlLayer) Start() error {
 		go func() {
 			time.Sleep(time.Duration(1) * time.Second)
 			c.SendPearDiscovery()
-			format.Display(format.Format_d(c.GetName(), "SendMsg()", "Sending pear discovery message..."))
+			format.Display(format.Format_d(c.GetName(), "Start()", "Sending pear discovery message..."))
 			time.Sleep(time.Duration(1) * time.Second)
-			format.Display(format.Format_d(c.GetName(), "SendMsg()", "Waiting for pear discovery answers..."))
+			format.Display(format.Format_d(c.GetName(), "Start()", "Waiting for pear discovery answers..."))
 			c.ClosePearDiscovery() // Will send known names to all nodes
 
 			// Start the child only after
@@ -130,7 +130,7 @@ func (c *ControlLayer) Start() error {
 			rcvmsg, err := reader.ReadString('\n') // read until newline
 			if err != nil {
 				// Handle error properly, e.g., if the connection is closed
-				format.Display(format.Format_e("Start()", "control_layer.go", "Reading error: "+err.Error()))
+				format.Display(format.Format_e(c.GetName(), "Start()", "Reading error: "+err.Error()))
 				return
 			}
 			rcvmsg = strings.TrimSuffix(rcvmsg, "\n") // remove the trailing newline character
@@ -149,21 +149,30 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		return nil
 	} 
 
+	// if format.Findval(msg, "destination", c.GetName()) == "verifiers" {
+	// 	format.Display(format.Format_w(c.GetName(), "HandleMsg()", "󱡁 Message to verifiers: "+msg))
+	// }
+
 	if !strings.Contains(msg, "pear_discovery") {
-		// Only print to stderr msg that are not related to pear_discovery
-		// (overwhelming)
+		// Only print to stderr msg that are not related to pear_discovery (overwhelming)
 		// format.Display(format.Format_w(c.GetName(), "HandleMsg()", "Received: "+msg))
 	}
+	// format.Display(format.Format_w(c.GetName(), "HandleMsg()", "Received: "+msg))
 
 	c.mu.Lock()
 	// Update vector clock 
+	// if contains vc: 
+	// if strings.Contains(msg, "vector_clock") {
 	if c.vectorClockReady {
-		recVC := format.RetrieveVectorClock(msg, len(c.vectorClock), c.vectorClockReady)
+		// Update the vector clock 
+		recVC := format.RetrieveVectorClock(msg, len(c.vectorClock))
 		c.vectorClock = utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
-	} else {
-		resClk, _ := strconv.Atoi(format.Findval(msg, "clk", c.GetName()))
-		c.clk = utils.Synchronise(c.clk, resClk)
 	}
+
+
+	resClk, _ := strconv.Atoi(format.Findval(msg, "clk", c.GetName()))
+	c.clk = utils.Synchronise(c.clk, resClk)
+
 	c.mu.Unlock()
 
 	// Extract msg caracteristics
@@ -330,7 +339,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				return nil
 			}
 
-			format.Display(format.Format_d(c.GetName(), "HandleMessage()", "📥 snapshot_response reçu from "+sender_name_source))
+			format.Display(format.Format_d(c.GetName(), "HandleMessage()", "📥✅ snapshot_response reçu from "+sender_name_source))
 
 			// Mise à jour de l'horloge vectorielle locale
 			vcStr := format.Findval(msg, "vector_clock", c.GetName())
@@ -362,19 +371,25 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 
 			// Vérifie si tous les capteurs ont répondu
 			// sensorNames := c.getSensorNames() // Fonction à ajouter : filtre les knownSiteNames pour ne garder que ceux qui commencent par "sensor"
-			if len(c.receivedSnapshots) == len(c.knownSiteNames)-1 {
+			if len(c.receivedSnapshots) == len(c.knownSiteNames) {
 				go c.CheckSnapshotCoherence() // méthode que tu dois avoir déjà codée
 			} else {
-				format.Display(format.Format_d(c.GetName(), "HandleMessage()", "Stil missing "+strconv.Itoa(len(c.knownSiteNames)-1-len(c.receivedSnapshots))+" sensors"))
+				format.Display(format.Format_d(c.GetName(), "HandleMessage()", "Still missing "+strconv.Itoa(len(c.knownSiteNames)-len(c.receivedSnapshots))+" sensors"))
 format.Display(format.Format_d(c.GetName(), "HandleMessage()", "Received snapshots: "+strconv.Itoa(len(c.receivedSnapshots))))
 			}
 		}
 
-	} else if msg_destination == "verifiers" && c.child.Type() == "verifier" {
-		// The msg is for the child app layer (which is a verifier)
-		// Send to child app through channel 
-		c.SendMsg(msg, true) // through channel
-		// Propagate to other verifiers
+	} else if msg_destination == "verifiers" {
+		if c.child.Type() == "verifier" {
+			// The msg is for the child app layer (which is a verifier)
+			// Send to child app through channel 
+			c.SendMsg(msg, true) // through channel
+			// Propagate to other verifiers
+		} else if c.child.Type() == "user" && msg_type == "lock_release_and_verified_value" {
+			// The msg is for the child app layer (which is a user)
+			// Send to child app through channel_to_application 
+			c.SendMsg(msg, true) // through channel 
+		}
 		propagate_msg = true
 	} else if msg_destination == c.child.GetName() {
 		// The msg is directly for the child app layer
@@ -405,6 +420,8 @@ format.Display(format.Format_d(c.GetName(), "HandleMessage()", "Received snapsho
 				// Propagate to other verifiers
 				propagate_msg = true
 			}
+		default:
+			propagate_msg = true
 		}
 	}
 
@@ -450,7 +467,8 @@ func (c *ControlLayer) InitVectorClockWithSites(sites []string) {
 // => Is it a receiving action followed by a call to sending action
 func (c *ControlLayer) SendApplicationMsg(msg string) error {
 	c.mu.Lock()
-	recVC := format.RetrieveVectorClock(msg, len(c.vectorClock), c.vectorClockReady)
+	// app necessarily has a vector clock if it has started
+	recVC := format.RetrieveVectorClock(msg, len(c.vectorClock))
 	c.vectorClock = utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
 	c.mu.Unlock()
 
@@ -512,10 +530,10 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs... bool) {
 	if c.vectorClockReady {
 		c.vectorClock[c.nodeIndex] += 1 // Incrément de l'horloge vectorielle locale
 		msg = format.Replaceval(msg, "vector_clock", utils.SerializeVectorClock(c.vectorClock))
-	} else {
-		c.clk += 1 // Incrément de l'horloge locale
-		msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clk))
 	}
+	c.clk += 1 // Incrément de l'horloge locale
+	msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clk))
+
 	c.mu.Unlock()
 
 	if through_channel {
@@ -653,11 +671,18 @@ func (c *ControlLayer) CheckSnapshotCoherence() {
 	for i := 0; i < len(ids); i++ {
 		for j := i + 1; j < len(ids); j++ {
 			if !utils.VectorClockCompatible(snapshots[ids[i]].VectorClock, snapshots[ids[j]].VectorClock) {
+				format.Display(format.Format_e(
+					c.GetName(), "CheckSnapshotCoherence()",
+					"❌ Snapshots incohérents entre "+ids[i]+" et "+ids[j]))
 				c.SaveSnapshotToCSVThreadSafe(snapshots)
 				return
 			}
 		}
 	}
+
+	format.Display(format.Format_g(
+		c.GetName(), "CheckSnapshotCoherence()",
+		"✅ Snapshots cohérents entre tous les capteurs"))
 
 	c.SaveSnapshotToCSVThreadSafe(snapshots)
 }

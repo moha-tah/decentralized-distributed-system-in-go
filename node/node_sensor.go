@@ -51,18 +51,19 @@ func (s *SensorNode) Start() error {
 
 	go func() {
 		for {
+			// continue until the vector clock is ready
+			if s.vectorClockReady == false {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
 			// ✅ Incrémenter l’horloge vectorielle locale
 			s.mu.Lock()
-			s_clk_str := ""
-			s_VC_str := ""
-			if s.vectorClockReady == false {
-				s.clk += 1
-				s_clk_str = strconv.Itoa(s.clk)
-			} else {
-				s.vectorClock[s.nodeIndex] += 1
-				s_clk_str = strconv.Itoa(s.vectorClock[s.nodeIndex])
-				s_VC_str = utils.SerializeVectorClock(s.vectorClock)
-			}
+			s.clk += 1
+			s_clk_str := strconv.Itoa(s.clk)
+			// if s.vectorClockReady == false {
+			s.vectorClock[s.nodeIndex] += 1
+			s_VC_str := utils.SerializeVectorClock(s.vectorClock)
+			// }
 			s.mu.Unlock()
 
 			// Générer une lecture
@@ -150,11 +151,16 @@ func (s *SensorNode) logFullMessage(msg_id string, reading models.Reading) {
 		"/sender_name_source=" + s.GetName() +
 		"/sender_type=" + s.Type() +
 		"/destination=" + destination +
-		"/clk=" + strconv.Itoa(s.vectorClock[s.nodeIndex]) +
-		"/vector_clock=" + utils.SerializeVectorClock(s.vectorClock) +
+		"/clk=" + strconv.Itoa(s.clk) + 
+		// "/vector_clock=" + utils.SerializeVectorClock(s.vectorClock) +
 		"/content_type=sensor_reading" +
-		"/content_value=" + strconv.FormatFloat(float64(reading.Temperature), 'f', -1, 32) +
-		"\n"
+		"/content_value=" + strconv.FormatFloat(float64(reading.Temperature), 'f', -1, 32)
+		// "\n"
+	if s.vectorClockReady == true {
+		logLine = logLine + "/vector_clock=" + utils.SerializeVectorClock(s.vectorClock)
+	}
+
+	logLine = logLine + "\n"
 
 	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
@@ -172,11 +178,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 
 		// 🔁 Mettre à jour le vector clock à la réception
 		s.mu.Lock()
-		if s.vectorClockReady == false {
-			recClk, _ := strconv.Atoi(format.Findval(msg, "clk", s.GetName()))
-			s.clk = utils.Synchronise(s.clk, recClk)
-			
-		} else {
+		if s.vectorClockReady == true {
 			vcStr := format.Findval(msg, "vector_clock", s.GetName())
 			recvVC, err := utils.DeserializeVectorClock(vcStr)
 			if err == nil {
@@ -184,8 +186,11 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 					s.vectorClock[i] = utils.Max(s.vectorClock[i], recvVC[i])
 				}
 				s.vectorClock[s.nodeIndex] += 1
-		}
-		}
+			}
+		} 
+		recClk, _ := strconv.Atoi(format.Findval(msg, "clk", s.GetName()))
+		s.clk = utils.Synchronise(s.clk, recClk)
+
 		s.mu.Unlock()
 
 		switch msgType {
@@ -209,7 +214,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 			// 📨 Création du message snapshot_response
 			originalRequester := format.Findval(msg, "sender_name", s.GetName())
 			msgID := s.GenerateUniqueMessageID()
-			msgResponse := format.Msg_format_multi(format.Build_msg_args(
+			response := format.Msg_format_multi(format.Build_msg_args(
 				"id", msgID,
 				"type", "snapshot_response",
 				"sender_name", originalRequester,
@@ -227,16 +232,46 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 			format.Display(format.Format_d(s.GetName(), "HandleMessage()", "Sending snapshot_response: "+readingsStr))
 
 			if s.ctrlLayer.id != "0_control" {
-				s.ctrlLayer.SendApplicationMsg(msgResponse)
+				// v.ctrlLayer.SendApplicationMsg(response)
+				s.SendMessage(response)
 			} else {
-				s.ctrlLayer.HandleMessage(msgResponse)
+				// v.ctrlLayer.HandleMessage(response)
+				s.SendMessage(response, true)
 			}
-			// Envoi vers couche application
-			if s.ctrlLayer.SendApplicationMsg(msg) == nil {
-				s.mu.Lock()
-				s.nbMsgSent = s.nbMsgSent + 1
-				s.mu.Unlock()
-			}
+
 		}
 	}
 }
+
+func (v *SensorNode) SendMessage(msg string, toHandleMessageArgs...bool) {
+	toHandleMessage := false
+	if len(toHandleMessageArgs) > 0 {
+		toHandleMessage = toHandleMessageArgs[0]
+	}
+	v.mu.Lock()
+	v.vectorClock[v.nodeIndex]++
+	serializedClock := utils.SerializeVectorClock(v.vectorClock)
+	v_clk := v.clk
+	v.mu.Unlock()
+
+	if v.vectorClockReady {
+		msg = format.Replaceval(msg, "vector_clock", serializedClock)
+	}
+	msg = format.Replaceval(msg, "clk", strconv.Itoa(v_clk))
+	msg = format.Replaceval(msg, "id", v.GenerateUniqueMessageID())
+
+
+	if toHandleMessage {
+		v.ctrlLayer.HandleMessage(msg)
+	} else {
+		v.ctrlLayer.SendApplicationMsg(msg)
+	}
+
+	// Increment the number of messages sent
+	// (used in ID generation, for next messages)
+	v.mu.Lock()
+	v.nbMsgSent++
+	v.mu.Unlock()
+
+}
+

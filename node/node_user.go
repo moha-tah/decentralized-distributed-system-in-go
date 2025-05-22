@@ -80,17 +80,15 @@ func (u *UserNode) HandleMessage(channel chan string) {
 
 	for msg := range channel {
 		u.mu.Lock()
-		clk_int := 0
-		if u.vectorClockReady == false {
-			rec_clk_str := format.Findval(msg, "clk", u.GetName())
-			rec_clk, _ := strconv.Atoi(rec_clk_str)
-			u.clk = utils.Synchronise(u.clk, rec_clk)
-			clk_int = u.clk
-		} else {
-			recVC := format.RetrieveVectorClock(msg, len(u.vectorClock), u.vectorClockReady)
-			u.vectorClock = utils.SynchroniseVectorClock(u.vectorClock, recVC, u.nodeIndex)
-			clk_int = u.vectorClock[u.nodeIndex]
-		}
+
+		rec_clk_str := format.Findval(msg, "clk", u.GetName())
+		rec_clk, _ := strconv.Atoi(rec_clk_str)
+		u.clk = utils.Synchronise(u.clk, rec_clk)
+		clk_int := u.clk
+		// if u.vectorClockReady == true {
+		recVC := format.RetrieveVectorClock(msg, len(u.vectorClock))
+		u.vectorClock = utils.SynchroniseVectorClock(u.vectorClock, recVC, u.nodeIndex)
+		// }
 		u.mu.Unlock()
 
 		var msg_type string = format.Findval(msg, "type", u.GetName())
@@ -162,6 +160,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 
 			// Créer la réponse avec horloge vectorielle uniquement
 			msgID := u.GenerateUniqueMessageID()
+			u.mu.Lock()
 			response := format.Msg_format_multi(format.Build_msg_args(
 				"id", msgID,
 				"type", "snapshot_response",
@@ -174,13 +173,17 @@ func (u *UserNode) HandleMessage(channel chan string) {
 				"content_type", "snapshot_data",
 				"content_value", "[]", // Empty for now
 			))
+			u.mu.Unlock()
 
 			format.Display(format.Format_d(u.GetName(), "HandleMessage()", "Sending snapshot_response"))
 			if u.ctrlLayer.id != "0_control" {
-				u.ctrlLayer.SendApplicationMsg(response)
+				// v.ctrlLayer.SendApplicationMsg(response)
+				u.SendMessage(response)
 			} else {
-				u.ctrlLayer.HandleMessage(response)
+				// v.ctrlLayer.HandleMessage(response)
+				u.SendMessage(response, true)
 			}
+
 
 			u.mu.Lock()
 			u.nbMsgSent++
@@ -189,6 +192,38 @@ func (u *UserNode) HandleMessage(channel chan string) {
 		}
 
 	}
+}
+
+func (v *UserNode) SendMessage(msg string, toHandleMessageArgs...bool) {
+	toHandleMessage := false
+	if len(toHandleMessageArgs) > 0 {
+		toHandleMessage = toHandleMessageArgs[0]
+	}
+	v.mu.Lock()
+	v.vectorClock[v.nodeIndex]++
+	serializedClock := utils.SerializeVectorClock(v.vectorClock)
+	v_clk := v.clk
+	v.mu.Unlock()
+
+	if v.vectorClockReady {
+		msg = format.Replaceval(msg, "vector_clock", serializedClock)
+	}
+	msg = format.Replaceval(msg, "clk", strconv.Itoa(v_clk))
+	msg = format.Replaceval(msg, "id", v.GenerateUniqueMessageID())
+
+
+	if toHandleMessage {
+		v.ctrlLayer.HandleMessage(msg)
+	} else {
+		v.ctrlLayer.SendApplicationMsg(msg)
+	}
+
+	// Increment the number of messages sent
+	// (used in ID generation, for next messages)
+	v.mu.Lock()
+	v.nbMsgSent++
+	v.mu.Unlock()
+
 }
 
 // handleLockRelease processes a lock release message from a verifier
@@ -272,7 +307,7 @@ func (n *UserNode) processDatabse() {
 		n.recentPredictions[sensor] = queue // Update the map
 		n.mu.Unlock()
 	}
-	n.printDatabase()
+	// n.printDatabase()
 }
 
 func (n *UserNode) printDatabase() {

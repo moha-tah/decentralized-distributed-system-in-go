@@ -125,25 +125,16 @@ func Msg_format_multi(kvPairs map[string]string) string {
 
 
 
-func RetrieveVectorClock(msg string, length_to_compare int, panic_args... bool) []int {
-	panicing := false
-	if len(panic_args) > 0 {
-		panicing = panic_args[0]
-	}
-	panicing = true
+func RetrieveVectorClock(msg string, length_to_compare int) []int {
 	recVC_str := Findval(msg, "vector_clock", "retrieveVectorClock")
 	recVC, err := utils.DeserializeVectorClock(recVC_str)
 	if err != nil {
-stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock deserialization: " + err.Error()))
-		if panicing {
+		stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock deserialization: " + err.Error()))
 		return nil
-		}
 	}
 	if len(recVC) != length_to_compare {
 		stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock length: "+strconv.Itoa(len(recVC_str)) + "vs "+strconv.Itoa(length_to_compare)))
-		if panicing {
 		return nil
-		}
 	}
 	return recVC 
 }

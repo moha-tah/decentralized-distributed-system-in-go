@@ -78,12 +78,13 @@ func (v *VerifierNode) Start() error {
 				if l_processing < processingCapacity { // Search for new only if not full already
 					go v.CheckUnverifiedItems()
 				} else {
-					processingItemID := ""
-					for itemID := range v.processingItems {
-						processingItemID = itemID
-						break
-					}
-					format.Display(format.Format_d(v.GetName(), "Start()", "Already processing "+ processingItemID))
+					// // debug:
+					// processingItemID := ""
+					// for itemID := range v.processingItems {
+					// 	processingItemID = itemID
+					// 	break
+					// }
+					// format.Display(format.Format_d(v.GetName(), "Start()", "Already processing "+ processingItemID))
 				}
 			}
 		}
@@ -113,16 +114,14 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 
 	for msg := range channel {
 		v.mu.Lock()
-		clk_int := 0
-		if v.vectorClockReady == false {
-			rec_clk, _ := strconv.Atoi(format.Findval(msg, "clk", v.GetName()))
-			v.clk = utils.Synchronise(v.clk, rec_clk)
-			clk_int = v.clk
-		} else {
+
+		rec_clk, _ := strconv.Atoi(format.Findval(msg, "clk", v.GetName()))
+		v.clk = utils.Synchronise(v.clk, rec_clk)
+		clk_int := v.clk
+		// if v.vectorClockReady == true {
 			recVC := format.RetrieveVectorClock(msg, len(v.vectorClock))
 			v.vectorClock = utils.SynchroniseVectorClock(v.vectorClock, recVC, v.nodeIndex)
-			clk_int = v.vectorClock[v.nodeIndex]
-		}
+		// }
 		v.mu.Unlock()
 
 		var msg_type string = format.Findval(msg, "type", v.GetName())
@@ -140,6 +139,9 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 				continue // Skip this message if parsing fails
 			}
 
+			format.Display(format.Format_d(
+				"node_user.go", "HandleMessage()",
+				v.GetName()+" received the new reading <"+msg_content_value+"> from "+msg_sender))
 			// Get or create the queue for the sender
 			v.mu.Lock()
 			queue, exists := v.recentReadings[msg_sender]
@@ -211,9 +213,11 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 
 			format.Display(format.Format_d(v.GetName(), "HandleMessage()", "Sending snapshot_response"))
 			if v.ctrlLayer.id != "0_control" {
-				v.ctrlLayer.SendApplicationMsg(response)
+				// v.ctrlLayer.SendApplicationMsg(response)
+				v.SendMessage(response)
 			} else {
-				v.ctrlLayer.HandleMessage(response)
+				// v.ctrlLayer.HandleMessage(response)
+				v.SendMessage(response, true)
 			}
 			
 		case "lock_request":
@@ -282,7 +286,11 @@ func (v *VerifierNode) removeAllExistenceOfReading(readingID string) {
 
 // SendMessage sends a message to the control layer.
 // Here is done the logic needed before and after sending the message
-func (v *VerifierNode) SendMessage(msg string) {
+func (v *VerifierNode) SendMessage(msg string, toHandleMessageArgs...bool) {
+	toHandleMessage := false
+	if len(toHandleMessageArgs) > 0 {
+		toHandleMessage = toHandleMessageArgs[0]
+	}
 	v.mu.Lock()
 	v.vectorClock[v.nodeIndex]++
 	serializedClock := utils.SerializeVectorClock(v.vectorClock)
@@ -291,11 +299,16 @@ func (v *VerifierNode) SendMessage(msg string) {
 
 	if v.vectorClockReady {
 		msg = format.Replaceval(msg, "vector_clock", serializedClock)
-	} else {
-		msg = format.Replaceval(msg, "clk", strconv.Itoa(v_clk))
 	}
+	msg = format.Replaceval(msg, "clk", strconv.Itoa(v_clk))
 	msg = format.Replaceval(msg, "id", v.GenerateUniqueMessageID())
-	v.ctrlLayer.SendApplicationMsg(msg)
+
+
+	if toHandleMessage {
+		v.ctrlLayer.HandleMessage(msg)
+	} else {
+		v.ctrlLayer.SendApplicationMsg(msg)
+	}
 
 	// Increment the number of messages sent
 	// (used in ID generation, for next messages)
@@ -402,7 +415,8 @@ func (v *VerifierNode) requestLock(reading models.Reading) {
 	if _, exists := v.lockRequests[itemID]; !exists {
 		v.lockRequests[itemID] = make(map[string]int)
 	}
-	v.lockRequests[itemID][v.GetName()] = v.vectorClock[v.nodeIndex] // Add our request to the map
+	// v.lockRequests[itemID][v.GetName()] = v.vectorClock[v.nodeIndex] // Add our request to the map
+	v.lockRequests[itemID][v.GetName()] = v.clk
 
 	// Then, the lock replies = the replies we received
 	// for this item. We reset replies for this item
@@ -425,7 +439,7 @@ func (v *VerifierNode) requestLock(reading models.Reading) {
 			"destination", "verifiers",
 			"item_id", itemID,
 			"request_clk", strconv.Itoa(v.vectorClock[v.nodeIndex]),
-			"clk", "",
+			"clk", strconv.Itoa(v.clk),
 			"vector_clock", our_VC,))
 	v.SendMessage(msg)
 }
@@ -442,6 +456,12 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 	// msg_VC := format.RetrieveVectorClock(msg, len(v.vectorClock))
 	msgVC_index_str := format.Findval(msg, "request_clk", v.GetName())
 	msgVC_index, err := strconv.Atoi(msgVC_index_str)
+	if err != nil {
+		format.Display(format.Format_e(v.GetName(), "handleLockRequest()", "Error parsing vector clock: "+msgVC_index_str))
+		return
+	}
+	msg_clk_str := format.Findval(msg, "clk", v.GetName())
+	msg_clk, err := strconv.Atoi(msg_clk_str)
 	if err != nil {
 		format.Display(format.Format_e(v.GetName(), "handleLockRequest()", "Error parsing vector clock: "+msgVC_index_str))
 		return
@@ -464,7 +484,7 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 	} else if _, havePendingRequest := v.lockRequests[itemID][v.GetName()]; havePendingRequest {
 		// Check if we have a pending request with higher priority
 		ourClock := v.lockRequests[itemID][v.GetName()]
-		if ourClock < msgVC_index || (ourClock == msgVC_index && v.GetName() < senderID) {
+		if ourClock < msg_clk || (ourClock == msgVC_index && v.GetName() < senderID) {
 			// In condition above, we are comparing two strings, GetName and senderID,
 			// which are both the names of the verifiers. It is legal in Go.
 			// Used to add arbitrary priority to the lock request.
@@ -503,11 +523,12 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 
 // handleLockReply processes a lock reply from another verifier
 func (v *VerifierNode) handleLockReply(msg string) {
+
 	// Extract information from the message
 	senderID := format.Findval(msg, "sender_name_source", v.GetName())
 	itemID := format.Findval(msg, "item_id", v.GetName())
 	grantedStr := format.Findval(msg, "granted", v.GetName())
-	
+
 	granted, err := strconv.ParseBool(grantedStr)
 	if err != nil {
 		format.Display(format.Format_e(v.GetName(), "handleLockReply()", "Error parsing granted value: "+grantedStr))
@@ -593,7 +614,6 @@ func (v *VerifierNode) cancelLockRequest(itemID string) {
 // meaning all other verifiers have granted the lock.
 // It needs to 1) say to the other verifiers that we have the lock, while 2) process the item.
 func (v *VerifierNode) acquiredFullLockOnItem(itemID string) {
-
 	v.mu.Lock()
 	our_VC := utils.SerializeVectorClock(v.vectorClock)
 	v.mu.Unlock()
