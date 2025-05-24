@@ -2,6 +2,7 @@ package format
 
 import (
 	"distributed_system/utils"
+	"distributed_system/consts"
 	"fmt"
 	"log"
 	"sort"
@@ -24,6 +25,14 @@ func Findval(msg string, key string, p_nom string) string {
 		}
 	}
 	return ""
+}
+
+func AddFieldToMessage(msg string, key string, val string) string {
+	return msg + fieldsep + keyvalsep + key + keyvalsep + val
+	// sep := msg[0:1]
+	// tab_allkeyvals := strings.Split(msg[1:], sep)
+	// tab_allkeyvals = append(tab_allkeyvals, sep+keyvalsep+key+keyvalsep+val)
+	// return sep + strings.Join(tab_allkeyvals, sep)
 }
 
 func Replaceval(msg string, key string, new_val string) string {
@@ -57,13 +66,13 @@ func Msg_send(msg string, p_nom string) {
 	if strings.Contains(msg, "pear_discovery") == false {
 		// Only print to stderr msg that are not related to pear_discovery
 		// (overwhelming)
-		// stderr.Printf(Format_w(p_nom, "Msg_send()", "émission de "+msg))
+		// stderr.Printf(Format_w(p_nom, "Msg_send()", " => "+msg))
 	}
 	fmt.Print(msg + "\n")
 }
 
-var fieldsep = "/"
-var keyvalsep = "="
+var fieldsep = consts.Fieldsep
+var keyvalsep = consts.Keyvalsep
 
 func Msg_format(key string, val string) string {
 	return fieldsep + keyvalsep + key + keyvalsep + val
@@ -122,7 +131,6 @@ func Msg_format_multi(kvPairs map[string]string) string {
 	}
 	return result
 }
-
 
 
 func RetrieveVectorClock(msg string, length_to_compare int) []int {

@@ -18,7 +18,8 @@ func Synchronise(x int, y int) int {
 
 func SynchroniseVectorClock(vc1 []int, vc2 []int, caller_index int) []int {
 	if len(vc1) != len(vc2) {
-		panic("utils.SynchroniseVectorClock: vector clocks must be of the same length")
+		panic("utils.SynchroniseVectorClock: vector clocks must be of the same length. Got " +
+		strconv.Itoa(len(vc1)) + " and " + strconv.Itoa(len(vc2)))
 	}
 	for i := 0; i < len(vc1); i++ {
 		vc1[i] = max(vc1[i], vc2[i])

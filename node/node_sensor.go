@@ -102,7 +102,7 @@ func (s *SensorNode) Start() error {
 				s.mu.Unlock()
 			}
 
-			time.Sleep(2 * time.Second)
+			time.Sleep(s.readInterval * time.Second)
 		}
 	}()
 	select {} // Block forever
@@ -174,13 +174,17 @@ func (s *SensorNode) Type() string { return s.nodeType }
 func (s *SensorNode) HandleMessage(channel chan string) {
 	for msg := range channel {
 		// 🔎 Identifier le type de message
-		msgType := format.Findval(msg, "type", s.GetName())
+		// msgType := format.Findval(msg, "type", s.GetName())
+		// msgSender := format.Findval(msg, "sender_name_source", s.GetName())
+		
+		vcStr := format.Findval(msg, "vector_clock", s.GetName())
+		recvVC, err := utils.DeserializeVectorClock(vcStr)
 
 		// 🔁 Mettre à jour le vector clock à la réception
 		s.mu.Lock()
 		if s.vectorClockReady == true {
-			vcStr := format.Findval(msg, "vector_clock", s.GetName())
-			recvVC, err := utils.DeserializeVectorClock(vcStr)
+			// vcStr := format.Findval(msg, "vector_clock", s.GetName())
+			// recvVC, err := utils.DeserializeVectorClock(vcStr)
 			if err == nil {
 				for i := 0; i < len(s.vectorClock); i++ {
 					s.vectorClock[i] = utils.Max(s.vectorClock[i], recvVC[i])
@@ -193,53 +197,50 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 
 		s.mu.Unlock()
 
-		switch msgType {
-
-		case "snapshot_request":
-			format.Display(format.Format_d(
-				s.GetName(), "HandleMessage()",
-				"🔎 snapshot_request reçu depuis " + s.GetName()))
-
-			// 🧠 Lire les dernières valeurs stockées
-			s.mu.Lock()
-			readings := make([]string, len(s.recentReadings))
-			for i, val := range s.recentReadings {
-				readings[i] = strconv.FormatFloat(float64(val), 'f', 2, 32)
-			}
-			s_VC := utils.SerializeVectorClock(s.vectorClock)
-			s_clk := strconv.Itoa(s.clk)
-			s.mu.Unlock()
-			readingsStr := "" + strings.Join(readings, ", ") + ""
-
-			// 📨 Création du message snapshot_response
-			originalRequester := format.Findval(msg, "sender_name", s.GetName())
-			msgID := s.GenerateUniqueMessageID()
-			response := format.Msg_format_multi(format.Build_msg_args(
-				"id", msgID,
-				"type", "snapshot_response",
-				"sender_name", originalRequester,
-				"sender_name_source", s.GetName(),
-				"sender_type", s.Type(),
-				"destination", format.Findval(msg, "sender_name_source", s.GetName()),
-				"vector_clock", s_VC,
-				"content_type", "snapshot_data",
-				"content_value", readingsStr,
-				"clk", s_clk,
-			))
-
-
-			// 🗂️ Log optionnel
-			format.Display(format.Format_d(s.GetName(), "HandleMessage()", "Sending snapshot_response: "+readingsStr))
-
-			if s.ctrlLayer.id != "0_control" {
-				// v.ctrlLayer.SendApplicationMsg(response)
-				s.SendMessage(response)
-			} else {
-				// v.ctrlLayer.HandleMessage(response)
-				s.SendMessage(response, true)
-			}
-
-		}
+		// switch msgType {
+		// case "snapshot_request":
+		//
+		// 	format.Display(format.Format_d(
+		// 		s.GetName(), "HandleMessage()",
+		// 		"🔎 snapshot_request reçu depuis " + s.GetName()))
+		//
+		// 	// 🧠 Lire les dernières valeurs stockées
+		// 	s.mu.Lock()
+		//
+		// 	s_VC := utils.SerializeVectorClock(s.vectorClock)
+		// 	s_clk := strconv.Itoa(s.clk)
+		// 	s.mu.Unlock()
+		// 	readingsStr := s.GetLocalState()
+		//
+		// 	// 📨 Création du message snapshot_response
+		// 	originalRequester := format.Findval(msg, "sender_name", s.GetName())
+		// 	msgID := s.GenerateUniqueMessageID()
+		// 	response := format.Msg_format_multi(format.Build_msg_args(
+		// 		"id", msgID,
+		// 		"type", "snapshot_response",
+		// 		"sender_name", originalRequester,
+		// 		"sender_name_source", s.GetName(),
+		// 		"sender_type", s.Type(),
+		// 		"destination", format.Findval(msg, "sender_name_source", s.GetName()),
+		// 		"vector_clock", s_VC,
+		// 		"content_type", "snapshot_data",
+		// 		"content_value", readingsStr,
+		// 		"clk", s_clk,
+		// 	))
+		//
+		//
+		// 	// 🗂️ Log optionnel
+		// 	format.Display(format.Format_d(s.GetName(), "HandleMessage()", "Sending snapshot_response: "+readingsStr))
+		//
+		// 	if s.ctrlLayer.id != "0_control" {
+		// 		// v.ctrlLayer.SendApplicationMsg(response)
+		// 		s.SendMessage(response)
+		// 	} else {
+		// 		// v.ctrlLayer.HandleMessage(response)
+		// 		s.SendMessage(response, true)
+		// 	}
+		//
+		// }
 	}
 }
 
@@ -275,3 +276,12 @@ func (v *SensorNode) SendMessage(msg string, toHandleMessageArgs...bool) {
 
 }
 
+func (n* SensorNode) GetLocalState() string {
+	n.mu.Lock()
+	readings := make([]string, len(n.recentReadings))
+	for i, val := range n.recentReadings {
+		readings[i] = strconv.FormatFloat(float64(val), 'f', 2, 32)
+	}
+	n.mu.Unlock()
+	return strings.Join(readings, ", ")
+}
