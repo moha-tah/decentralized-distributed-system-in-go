@@ -29,7 +29,7 @@ func main() {
 
 	switch *node_type {
 	case "sensor":
-		interval := time.Duration(20) * time.Second
+		interval := time.Duration(1) * time.Second
 		errorRate := float32(0.5)
 		child_node = node.NewSensorNode(*node_id, interval, errorRate, baseTempLow, baseTempHigh)
 	case "verifier":

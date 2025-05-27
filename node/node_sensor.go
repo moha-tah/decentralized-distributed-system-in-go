@@ -52,7 +52,10 @@ func (s *SensorNode) Start() error {
 	go func() {
 		for {
 			// continue until the vector clock is ready
-			if s.vectorClockReady == false {
+			s.mu.Lock()
+			vectorClockReady := s.vectorClockReady
+			s.mu.Unlock()
+			if vectorClockReady == false {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
@@ -102,7 +105,7 @@ func (s *SensorNode) Start() error {
 				s.mu.Unlock()
 			}
 
-			time.Sleep(s.readInterval * time.Second)
+			time.Sleep(s.readInterval)
 		}
 	}()
 	select {} // Block forever

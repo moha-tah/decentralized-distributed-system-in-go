@@ -499,7 +499,7 @@ func (c *ControlLayer) handleSnapshotMsg(msg string) bool {
 	// Used in HandleMessage() to check if message needs to be processed (true if it is not a snapshot message)
 	processMessage := false 
 
-	//⚠️ FIFO hypothsesis: if a node receives a snapshot request, it has already
+	//⚠️ FIFO hypothesis: if a node receives a snapshot request, it has already
 	// received a marker before from the same node.
 	if msg_type == "snapshot_request" {
 		if !snapshot_taken {
