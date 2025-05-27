@@ -4,8 +4,8 @@ import (
 	// "fmt"
 	"distributed_system/format"
 	"distributed_system/models"
-	"fmt"
 	"distributed_system/utils"
+	"fmt"
 	"math/rand"
 	"os"
 	"strconv"
@@ -16,21 +16,21 @@ import (
 // SensorNode represents a temperature sensor in the system
 type SensorNode struct {
 	BaseNode
-	readInterval time.Duration
-	errorRate    float32
-	baseTemp     []float32 // [low, high]
+	readInterval   time.Duration
+	errorRate      float32
+	baseTemp       []float32 // [low, high]
 	recentReadings []float32
 }
 
 // NewSensorNode creates a new sensor node
 func NewSensorNode(id string, interval time.Duration, errorRate float32, baseTempLow float32, baseTempHigh float32) *SensorNode {
-    return &SensorNode{
-        BaseNode:     NewBaseNode(id, "sensor"),
-        readInterval: interval,
-        errorRate:    errorRate,
-	baseTemp:     []float32{baseTempLow, baseTempHigh},
-	recentReadings: make([]float32, 0, 15),
-    }
+	return &SensorNode{
+		BaseNode:       NewBaseNode(id, "sensor"),
+		readInterval:   interval,
+		errorRate:      errorRate,
+		baseTemp:       []float32{baseTempLow, baseTempHigh},
+		recentReadings: make([]float32, 0, 15),
+	}
 }
 
 func (s *SensorNode) InitVectorClockWithSites(sites []string) {
@@ -110,25 +110,25 @@ func (s *SensorNode) Start() error {
 
 // generateReading produces a simulated temperature reading
 func (s *SensorNode) generateReading() models.Reading {
-    // Generate a base realistic temperature (between low and high values).
-    baseTemp := rand.Float32() * (s.baseTemp[1] - s.baseTemp[0]) + s.baseTemp[0]
-    
-    // Sometimes introduce errors based on errorRate
-    if rand.Float32() < s.errorRate {
-	// Generate erroneous readings (very high)
-	baseTemp = baseTemp + 50.0 + rand.Float32()*100.0
-    }
-    
-    // Add some minor natural variation
-    temperature := baseTemp + (rand.Float32() - 0.5) * 2.0
-    
-    return models.Reading{
-        // ReadingID:   s.GenerateUniqueMessageID(),
-        Temperature: temperature,
-        Timestamp:   time.Now(),
-        SensorID:    s.ID(),
-        IsVerified:  false,
-    }
+	// Generate a base realistic temperature (between low and high values).
+	baseTemp := rand.Float32()*(s.baseTemp[1]-s.baseTemp[0]) + s.baseTemp[0]
+
+	// Sometimes introduce errors based on errorRate
+	if rand.Float32() < s.errorRate {
+		// Generate erroneous readings (very high)
+		baseTemp = baseTemp + 50.0 + rand.Float32()*100.0
+	}
+
+	// Add some minor natural variation
+	temperature := baseTemp + (rand.Float32()-0.5)*2.0
+
+	return models.Reading{
+		// ReadingID:   s.GenerateUniqueMessageID(),
+		Temperature: temperature,
+		Timestamp:   time.Now(),
+		SensorID:    s.ID(),
+		IsVerified:  false,
+	}
 }
 
 func (s *SensorNode) initLogFile() {
@@ -151,11 +151,11 @@ func (s *SensorNode) logFullMessage(msg_id string, reading models.Reading) {
 		"/sender_name_source=" + s.GetName() +
 		"/sender_type=" + s.Type() +
 		"/destination=" + destination +
-		"/clk=" + strconv.Itoa(s.clk) + 
+		"/clk=" + strconv.Itoa(s.clk) +
 		// "/vector_clock=" + utils.SerializeVectorClock(s.vectorClock) +
 		"/content_type=sensor_reading" +
 		"/content_value=" + strconv.FormatFloat(float64(reading.Temperature), 'f', -1, 32)
-		// "\n"
+	// "\n"
 	if s.vectorClockReady == true {
 		logLine = logLine + "/vector_clock=" + utils.SerializeVectorClock(s.vectorClock)
 	}
@@ -171,6 +171,7 @@ func (s *SensorNode) logFullMessage(msg_id string, reading models.Reading) {
 
 func (s *SensorNode) ID() string   { return s.id }
 func (s *SensorNode) Type() string { return s.nodeType }
+
 func (s *SensorNode) HandleMessage(channel chan string) {
 	for msg := range channel {
 		// 🔎 Identifier le type de message
@@ -187,7 +188,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 				}
 				s.vectorClock[s.nodeIndex] += 1
 			}
-		} 
+		}
 		recClk, _ := strconv.Atoi(format.Findval(msg, "clk", s.GetName()))
 		s.clk = utils.Synchronise(s.clk, recClk)
 
@@ -198,7 +199,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 		case "snapshot_request":
 			format.Display(format.Format_d(
 				s.GetName(), "HandleMessage()",
-				"🔎 snapshot_request reçu depuis " + s.GetName()))
+				"🔎 snapshot_request reçu depuis "+s.GetName()))
 
 			// 🧠 Lire les dernières valeurs stockées
 			s.mu.Lock()
@@ -227,7 +228,6 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 				"clk", s_clk,
 			))
 
-
 			// 🗂️ Log optionnel
 			format.Display(format.Format_d(s.GetName(), "HandleMessage()", "Sending snapshot_response: "+readingsStr))
 
@@ -243,7 +243,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 	}
 }
 
-func (v *SensorNode) SendMessage(msg string, toHandleMessageArgs...bool) {
+func (v *SensorNode) SendMessage(msg string, toHandleMessageArgs ...bool) {
 	toHandleMessage := false
 	if len(toHandleMessageArgs) > 0 {
 		toHandleMessage = toHandleMessageArgs[0]
@@ -260,7 +260,6 @@ func (v *SensorNode) SendMessage(msg string, toHandleMessageArgs...bool) {
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(v_clk))
 	msg = format.Replaceval(msg, "id", v.GenerateUniqueMessageID())
 
-
 	if toHandleMessage {
 		v.ctrlLayer.HandleMessage(msg)
 	} else {
@@ -274,4 +273,3 @@ func (v *SensorNode) SendMessage(msg string, toHandleMessageArgs...bool) {
 	v.mu.Unlock()
 
 }
-
