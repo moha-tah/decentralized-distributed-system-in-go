@@ -1,8 +1,4 @@
-ID,Vector Clock,Values
-sensor (0),"0,0,28,28,32,33,35",72.43000;25.80000
-verifier (1),"0,0,47,28,32,33,32",
-sensor (2),"0,0,28,37,32,33,32",24.92000;146.25999
-verifier (6),"0,0,28,28,32,46,32",
-user (3),"40,0,28,28,32,33,32",
-user (5),"0,40,28,28,32,33,32",
-sensor (4),"0,0,47,37,43,46,32",15.67000;114.67000
+NodeName,Initiator,VectorClock,Content,BufferedMessages
+control (0_control),control (0_control),"70,55,81","sensor (1):sensor (1)_1,sensor (1)_2,sensor (1)_3,sensor (1)_4,sensor (1)_5,sensor (1)_6,sensor (1)_7,sensor (1)_8,@",
+control (1_control),control (0_control),"63,54,70","112.22, 94.80, 28.01, 26.57, 168.74, 25.95, 107.85, 25.15",
+control (2_control),control (0_control),"69,52,70","sensor (1): [sensor (1)_1,32.00,21,true,verifier (2);sensor (1)_2,94.80,36,false,;sensor (1)_3,28.01,39,true,verifier (2);sensor (1)_4,26.57,50,true,verifier (2);sensor (1)_5,32.00,59,true,verifier (2);sensor (1)_6,25.95,74,false,;sensor (1)_7,107.85,77,false,;sensor (1)_8,25.15,84,false,;]@",

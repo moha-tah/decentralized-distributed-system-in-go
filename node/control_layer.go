@@ -4,6 +4,9 @@ import (
 	"bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
 	"distributed_system/format"
 	"distributed_system/utils"
+	"encoding/csv"
+	"log"
+
 	// "encoding/csv"
 	// "fmt"
 	// "log"
@@ -16,12 +19,12 @@ import (
 )
 
 type ControlLayer struct {
-	mu   	  sync.RWMutex
+	mu        sync.RWMutex
 	id        string
 	nodeType  string
 	isRunning bool
 
-	clk 		int
+	clk              int
 	vectorClockReady bool  // true when nbOfKnownSites is set
 	vectorClock      []int // Size = nbOfKnownSites when init.
 	nodeIndex        int   // position of this node in the vector
@@ -35,26 +38,25 @@ type ControlLayer struct {
 
 	nbOfKnownSites       int
 	knownSiteNames       []string
-	knownVerifierNames   []string 
+	knownVerifierNames   []string
 	sentDiscoveryMessage bool // To send its name only once
 	pearDiscoverySealed  bool
 	receivedSnapshots    map[string]SnapshotData
 
 	// For the snapshot algorithm:
-	markersReceivedFrom 	map[int][]string 	// map[snapshot_id] => list of nodes that sent back the marker for that snap_id
-	nodeMarker 		int 			// current node's marker id 
-	subTreeState		GlobalSnapshot		// Buffered, waiting for acquiring all to the send to parent
-	snapResponseSent	bool			// true if the snapshot response has been sent to the parent
-	nbSnapResponsePending	int			// number of snapshot responses pending (= 0 => send our response to parent)
+	markersReceivedFrom   map[int][]string // map[snapshot_id] => list of nodes that sent back the marker for that snap_id
+	nodeMarker            int              // current node's marker id
+	subTreeState          GlobalSnapshot   // Buffered, waiting for acquiring all to the send to parent
+	snapResponseSent      bool             // true if the snapshot response has been sent to the parent
+	nbSnapResponsePending int              // number of snapshot responses pending (= 0 => send our response to parent)
 
 	// For the spanning tree:
-	parentNodeName string // name of the parent node in the spanning tree
-	childrenNames []string // names of the children nodes in the spanning tree
-	directNeighbors	     []string
-	directNeighborsEnd	bool // true when we know our neighbors (delay of 1s after neighbor discovery)
-	nbExpectedTreeAnswers     int
+	parentNodeName        string   // name of the parent node in the spanning tree
+	childrenNames         []string // names of the children nodes in the spanning tree
+	directNeighbors       []string
+	directNeighborsEnd    bool // true when we know our neighbors (delay of 1s after neighbor discovery)
+	nbExpectedTreeAnswers int
 }
-
 
 func (c *ControlLayer) GetName() string {
 	return c.nodeType + " (" + c.id + ")"
@@ -64,36 +66,36 @@ func (c *ControlLayer) GenerateUniqueMessageID() string {
 }
 
 func NewControlLayer(id string, child Node) *ControlLayer {
-    return &ControlLayer{
-		id: id,
-		nodeType: "control",
-		isRunning: false,
-		vectorClock: []int{0},
-		clk: 0,
-		nodeIndex:  0,
-		child:	   child,
-		nbMsgSent: 0,
-		IDWatcher:  utils.NewMIDWatcher(),
+	return &ControlLayer{
+		id:                     id,
+		nodeType:               "control",
+		isRunning:              false,
+		vectorClock:            []int{0},
+		clk:                    0,
+		nodeIndex:              0,
+		child:                  child,
+		nbMsgSent:              0,
+		IDWatcher:              utils.NewMIDWatcher(),
 		channel_to_application: make(chan string, 10), // Buffered channel
-		nbOfKnownSites: 0, 
-		sentDiscoveryMessage: false,
-		pearDiscoverySealed: false,
-		knownSiteNames: make([]string, 0),
-		knownVerifierNames: make([]string, 0),
+		nbOfKnownSites:         0,
+		sentDiscoveryMessage:   false,
+		pearDiscoverySealed:    false,
+		knownSiteNames:         make([]string, 0),
+		knownVerifierNames:     make([]string, 0),
 		receivedSnapshots:      make(map[string]SnapshotData),
 
 		// For the snapshot algorithm:
 		markersReceivedFrom: make(map[int][]string),
-		nodeMarker: -1,
-		subTreeState: GlobalSnapshot{SnapshotId: ""},
+		nodeMarker:          -1,
+		subTreeState:        GlobalSnapshot{SnapshotId: ""},
 
 		// For the spanning tree:
-		directNeighbors:     	make([]string, 0),
-		directNeighborsEnd:	false,
-		parentNodeName: 	"",
-		childrenNames: 		make([]string, 0),
-		nbExpectedTreeAnswers: 	0,
-    }
+		directNeighbors:       make([]string, 0),
+		directNeighborsEnd:    false,
+		parentNodeName:        "",
+		childrenNames:         make([]string, 0),
+		nbExpectedTreeAnswers: 0,
+	}
 }
 
 // Start begins the control operations
@@ -104,7 +106,7 @@ func (c *ControlLayer) Start() error {
 	c.child.SetControlLayer(c)
 
 	// Msg to application will be send through channel
-	go c.child.HandleMessage(c.channel_to_application) 
+	go c.child.HandleMessage(c.channel_to_application)
 
 	// Idea to know how many nodes exists:
 	// We can not send the pear discovery message RIGHT AT startup: other nodes won't be
@@ -126,7 +128,7 @@ func (c *ControlLayer) Start() error {
 			// 3. Close the pear discovery (=send all received names to all nodes)
 			c.ClosePearDiscovery() // Will send known names to all nodes
 			time.Sleep(time.Duration(1) * time.Second)
-			
+
 			// 4. Start tree construction only after we know our neighbors
 			c.mu.Lock()
 			directNeighborsEnd := c.directNeighborsEnd
@@ -141,18 +143,18 @@ func (c *ControlLayer) Start() error {
 		}()
 		//demande de snapshot après 5 secondes
 		go func() {
-			time.Sleep(6 * time.Second) // attendre que tout soit initialisé
-			format.Display(format.Format_d("Start()", c.GetName(), "⏳ 20s écoulées, envoi de la requête snapshot..."))
+			time.Sleep(10 * time.Second) // attendre que tout soit initialisé
+			format.Display(format.Format_d("Start()", c.GetName(), "⏳ 10s écoulées, envoi de la requête snapshot..."))
 			c.RequestSnapshot()
 			format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
 			time.Sleep(3 * time.Second) // attendre que tout soit initialisé
-			format.Display(format.Format_d("Start()", c.GetName(), "⏳ 20s écoulées, envoi de la requête snapshot..."))
+			format.Display(format.Format_d("Start()", c.GetName(), "⏳ 10s écoulées, envoi de la requête snapshot..."))
 			c.RequestSnapshot()
 			format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
 		}()
 	}
 
-	// ALL nodes wait, send neighbor discovery message to their direct neighbors, 
+	// ALL nodes wait, send neighbor discovery message to their direct neighbors,
 	// and then start their child.
 	go func() { // Wake up child only after pear discovery is finished
 		time.Sleep(time.Duration(4) * time.Second)
@@ -192,12 +194,12 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	// If it is the case (= duplicate) => ignore.
 	if c.SawThatMessageBefore(msg) {
 		return nil
-	} 
+	}
 
 	// Receiving operations: update the vector clock and the logical clock
 	c.mu.Lock()
 	if c.vectorClockReady {
-		// Update the vector clock 
+		// Update the vector clock
 		recVC := format.RetrieveVectorClock(msg, len(c.vectorClock))
 		c.vectorClock = utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
 	}
@@ -205,9 +207,8 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	c.clk = utils.Synchronise(c.clk, resClk)
 	c.mu.Unlock()
 
-	
-	// BEFORE any processing, snapshots are considered, as snapshot logic is in 
-	// another function. 
+	// BEFORE any processing, snapshots are considered, as snapshot logic is in
+	// another function.
 	var processMessage bool = c.handleSnapshotMsg(msg) // process=True if normal message
 	if !processMessage {
 		return nil
@@ -243,7 +244,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				"clk", "", // changed in SendMsg
 				"vector_clock", "", // changed in SendMsg
 				"propagation", "false",
-				))
+			))
 			c.SendMsg(msg_to_neighbor)
 			// no propagation of the message, as it is only for the sender
 		// The case "neighbor_discovery_answer" is in condition `msg_destination == c.GetName()`
@@ -267,10 +268,10 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 					// Content of the message:
 					answer,
 					// Content type and msg type:
-					"siteName", "pear_discovery_answer", 
+					"siteName", "pear_discovery_answer",
 					// Destination = source written in content_value:
-					format.Findval(msg, "content_value", c.GetName()), 
-					// Msg ID and source: 
+					format.Findval(msg, "content_value", c.GetName()),
+					// Msg ID and source:
 					"", c.GetName())
 
 				// Then propagate the pear_discovery
@@ -286,7 +287,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				// for each site, retrieve its name and verifier name (if applicable):
 				sites_verifiers_parts := strings.Split(names_in_message, utils.PearD_VERIFIER_SEPARATOR)
 				sites_parts := strings.Split(sites_verifiers_parts[0], utils.PearD_SITE_SEPARATOR)
-				
+
 				c.mu.Lock()
 				for _, site := range sites_parts {
 					c.knownSiteNames = append(c.knownSiteNames, site)
@@ -301,11 +302,9 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				c.pearDiscoverySealed = true
 				c.mu.Unlock()
 
-
 				// Propagation à d'autres contrôleurs
 				var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
 				c.SendMsg(propagate_msg)
-
 
 				// Init child vector clock with the known sites
 				c.InitVectorClockWithSites(knownSiteNames)
@@ -313,7 +312,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 
 				// If any verifier name, send it to verifier chile (if it is a verifier)
 				if c.child.Type() == "verifier" {
-					// Send to child app through channel 
+					// Send to child app through channel
 					msg_to_verifier := format.Msg_format_multi(format.Build_msg_args(
 						"id", format.Findval(msg, "id", c.GetName()),
 						"type", "pear_discovery_verifier",
@@ -325,7 +324,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 						"content_value", strings.Join(c.knownVerifierNames, utils.PearD_SITE_SEPARATOR),
 						"clk", "", // changed in SendMsg
 						"vector_clock", "", // changed in SendMsg
-						))
+					))
 					c.SendMsg(msg_to_verifier, true) // through channel
 				}
 
@@ -334,7 +333,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 
 		case "tree_blue":
 			c.processBlueTree(msg)
-			
+
 		}
 	} else if msg_destination == c.GetName() { // The msg is only for the current node
 		switch msg_type {
@@ -347,22 +346,22 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			var verifierName string = ""
 			var siteName string = ""
 			if strings.Contains(newSiteName, utils.PearD_VERIFIER_SEPARATOR) {
-				// Split the verifier name from the site name 
+				// Split the verifier name from the site name
 				parts := strings.Split(newSiteName, utils.PearD_VERIFIER_SEPARATOR)
 				verifierName = parts[1]
 				siteName = parts[0]
 			} else {
-				// No verifier name, only the site name 
+				// No verifier name, only the site name
 				siteName = newSiteName
 			}
 
 			// Check if not already in known sites list. Will happend because of answer
-			// message propagation (see case `pear_discovery_answer` below) 
+			// message propagation (see case `pear_discovery_answer` below)
 			//(which is a mandatory feature -to bring message all the way to node 0- not a problem)
 			if !slices.Contains(c.knownSiteNames, siteName) {
 				c.knownSiteNames = append(c.knownSiteNames, siteName)
 				c.nbOfKnownSites += 1
-			} 
+			}
 			if verifierName != "" && !slices.Contains(c.knownVerifierNames, verifierName) {
 				c.knownVerifierNames = append(c.knownVerifierNames, verifierName)
 			}
@@ -376,22 +375,22 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 
 		case "tree_blue": // tree construction message (blue messages from lecture)
 			c.processBlueTree(msg)
-		case "tree_red":  // tree construction message (red messages from lecture)
+		case "tree_red": // tree construction message (red messages from lecture)
 			is_my_child_str := format.Findval(msg, "child", c.GetName())
 			is_my_child, err := strconv.ParseBool(is_my_child_str)
 			if is_my_child_str == "" {
-				is_my_child = false 
+				is_my_child = false
 			} else if err != nil {
 				format.Display(format.Format_e(c.GetName(), "HandleMessage()", "Error parsing child value: "+err.Error()))
 			}
 
 			c.mu.Lock()
-			c.nbExpectedTreeAnswers -= 1 
+			c.nbExpectedTreeAnswers -= 1
 			nbExpectedTreeAnswers := c.nbExpectedTreeAnswers
 			parentNodeName := c.parentNodeName
 			if is_my_child {
 				c.childrenNames = append(c.childrenNames, sender_name_source)
-			} 
+			}
 			c.mu.Unlock()
 			if nbExpectedTreeAnswers == 0 {
 				if parentNodeName == c.GetName() {
@@ -404,9 +403,9 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 						"sender_name", c.GetName(),
 						"sender_type", "control",
 						"destination", parentNodeName,
-						"clk", "", 		// changed in SendMsg
-						"vector_clock", "", 	// changed in SendMsg
-						"child", "true",	// Notify parent that I am a child
+						"clk", "", // changed in SendMsg
+						"vector_clock", "", // changed in SendMsg
+						"child", "true", // Notify parent that I am a child
 					))
 					c.SendMsg(tree_answer)
 				}
@@ -421,14 +420,14 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		} else if c.child.Type() == "user" && msg_type == "lock_release_and_verified_value" {
 			// The msg is for the child app layer (which is a user)
 			// The user also needs to receive the verified value:
-			c.SendMsg(msg, true) // through channel 
+			c.SendMsg(msg, true) // through channel
 		}
 		propagate_msg = true // Propagate to other verifiers
 	} else if msg_destination == c.child.GetName() {
 		// The msg is directly for the child app layer
 		c.SendMsg(msg, true) // through channel
 	} else {
-		
+
 		switch msg_type {
 		case "pear_discovery_answer":
 			// Here, a node receives the answer (name) of another node.
@@ -447,7 +446,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			// as is contains the verified value. For verifier, it would have
 			// entered above (case dest=verifier). And for user it is done here:
 			if c.child.Type() == "user" {
-				// Send to child app through channel 
+				// Send to child app through channel
 				c.SendMsg(msg, true) // through channel
 				// Propagate to other verifiers
 				propagate_msg = true
@@ -466,24 +465,22 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	return nil
 }
 
-
-
 // handleSnapshotMsg handles snapshot messages and takes appropriate actions.
 // It checks if the message is a snapshot request, marker, or response and processes it accordingly.
 // It also checks if the message is a normal message and updates the buffered messages if needed.
 // It returns true if the message should be processed further in HandleMessage() (not a snapshot message).
-// Overall logic: 
+// Overall logic:
 // - If a snapshot request is received, take a snapshot and propagate it.
 // - If a snapshot marker is received, take a snapshot if not already taken and propagate it.
 // - If a snapshot response is received, update the local state and send a response to the parent node.
 // - If a normal message is received, check if it is buffered and update the buffered messages accordingly.
 // ⚠️ FIFO hypothesis.
 func (c *ControlLayer) handleSnapshotMsg(msg string) bool {
-	msg_type := format.Findval(msg, "type", c.GetName()) 
+	msg_type := format.Findval(msg, "type", c.GetName())
 	initiator := format.Findval(msg, "sender_name_source", c.GetName())
 	sender_name := format.Findval(msg, "sender_name", c.GetName())
 
-	snapshot_id,snap_err := strconv.Atoi(format.Findval(msg, "snapshot_id", c.GetName()))
+	snapshot_id, snap_err := strconv.Atoi(format.Findval(msg, "snapshot_id", c.GetName()))
 	if snap_err != nil {
 		format.Display(format.Format_e(c.GetName(), "HandleMessage()", "Error parsing snapshot_id: "+snap_err.Error()))
 	}
@@ -497,7 +494,7 @@ func (c *ControlLayer) handleSnapshotMsg(msg string) bool {
 	c.mu.Unlock()
 
 	// Used in HandleMessage() to check if message needs to be processed (true if it is not a snapshot message)
-	processMessage := false 
+	processMessage := false
 
 	//⚠️ FIFO hypothesis: if a node receives a snapshot request, it has already
 	// received a marker before from the same node.
@@ -550,13 +547,13 @@ func (c *ControlLayer) handleSnapshotMsg(msg string) bool {
 		nbSnapResponses := c.nbSnapResponsePending
 		c.mu.Unlock()
 		// Send to parent when all children have sent their response
-		if nbSnapResponses == 0  {
+		if nbSnapResponses == 0 {
 			c.sendSnapshotResponse()
 		}
 	} else {
 		// Normal message, buffer it if snapshot is taken
 		if snapshot_taken {
-			markedThisNode := false 
+			markedThisNode := false
 			for marked_snap_id := range c.markersReceivedFrom {
 				if snapshot_id == marked_snap_id {
 					markedThisNode = true
@@ -587,6 +584,12 @@ func (c *ControlLayer) sendSnapshotResponse() {
 		for _, childState := range c.subTreeState.Data {
 			format.Display(format.Format_g(c.GetName(), "SendSnap()", "Child state: "+SerializeSnapshotData(childState)))
 		}
+		// AJOUT : Sauvegarde la snapshot dans un CSV
+		snapshots := make(map[string]SnapshotData)
+		for _, childState := range c.subTreeState.Data {
+			snapshots[childState.NodeName] = childState
+		}
+		c.SaveSnapshotToCSVThreadSafe(snapshots)
 		c.mu.Unlock()
 		return
 	}
@@ -606,12 +609,11 @@ func (c *ControlLayer) sendSnapshotResponse() {
 		"content_type", "snapshot_data",
 		"content_value", snap_content,
 		"snapshot_id", strconv.Itoa(snapshot_id),
-		"clk", "",		// changed in SendMsg
-		"vector_clock", "",	// changed in SendMsg
+		"clk", "", // changed in SendMsg
+		"vector_clock", "", // changed in SendMsg
 	))
 	c.SendMsg(response)
 }
-
 
 // Tree construction logic (blue messages from lecture)
 func (c *ControlLayer) processBlueTree(msg string) {
@@ -623,9 +625,9 @@ func (c *ControlLayer) processBlueTree(msg string) {
 		"sender_name", c.GetName(),
 		"sender_type", "control",
 		"destination", sender_name_source,
-		"clk", "", 		// changed in SendMsg
-		"vector_clock", "", 	// changed in SendMsg
-		"child","false",
+		"clk", "", // changed in SendMsg
+		"vector_clock", "", // changed in SendMsg
+		"child", "false",
 		"propagation", "false",
 	))
 
@@ -661,7 +663,7 @@ func (c *ControlLayer) processBlueTree(msg string) {
 	}
 }
 
-func (c* ControlLayer) takeSnapshotAndPropagate(snapshot_id int, initiator string) {
+func (c *ControlLayer) takeSnapshotAndPropagate(snapshot_id int, initiator string) {
 	c.mu.Lock()
 	c.snapResponseSent = false
 	c.nbSnapResponsePending = len(c.childrenNames)
@@ -669,13 +671,13 @@ func (c* ControlLayer) takeSnapshotAndPropagate(snapshot_id int, initiator strin
 		VectorClock: c.vectorClock,
 		Content:     c.child.GetLocalState(),
 		Initiator:   initiator,
-		NodeName: c.GetName(),
+		NodeName:    c.GetName(),
 		BufferedMsg: make([]string, 0),
 	}
 
 	subTreeState := GlobalSnapshot{} // Reset current snapshot
 	if subTreeState.Initiator == "" {
-		subTreeState.Initiator = state.Initiator 
+		subTreeState.Initiator = state.Initiator
 	}
 	if subTreeState.Data == nil {
 		subTreeState.Data = []SnapshotData{}
@@ -700,8 +702,8 @@ func (c* ControlLayer) takeSnapshotAndPropagate(snapshot_id int, initiator strin
 		"sender_name_source", initiator,
 		"sender_type", "control",
 		"destination", "",
-		"clk", "", 		// Is done in c.SendMsg
-		"vector_clock", "", 	// Is done in c.SendMsg
+		"clk", "", // Is done in c.SendMsg
+		"vector_clock", "", // Is done in c.SendMsg
 		"content_type", "request_type",
 		"propagation", "false",
 	))
@@ -717,7 +719,7 @@ func (c* ControlLayer) takeSnapshotAndPropagate(snapshot_id int, initiator strin
 
 // RequestSnapshot sends a snapshot request to all neighbors.
 // It first takes a snapshot and then sends the request to other nodes.
-// As it first takes a snapshot, nodes will first receive the 
+// As it first takes a snapshot, nodes will first receive the
 // marker message from `takeSnapshotAndPropagate()` and then the request message.
 func (c *ControlLayer) RequestSnapshot() {
 	c.mu.Lock()
@@ -764,7 +766,7 @@ func (c *ControlLayer) AddNewMessageId(sender_name string, MID_str string) {
 	if err != nil {
 		format.Display(format.Format_e("AddNewMessageID()", c.GetName(), "Error in message id: "+err.Error()))
 	}
-	
+
 	c.mu.Lock()
 	c.IDWatcher.AddMIDToNode(sender_name, msg_NbMessageSent)
 	c.mu.Unlock()
@@ -827,10 +829,10 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 }
 
 // SendMsg sends a message to the network.
-// Param through_channel is used to indicate if the message 
+// Param through_channel is used to indicate if the message
 // should be sent through the channel to the application layer ONLY (ie.
 // not to the network).
-func (c *ControlLayer) SendMsg(msg string, through_channelArgs... bool) {
+func (c *ControlLayer) SendMsg(msg string, through_channelArgs ...bool) {
 	through_channel := false
 	if len(through_channelArgs) > 0 {
 		through_channel = through_channelArgs[0]
@@ -910,14 +912,14 @@ func (c *ControlLayer) ClosePearDiscovery() {
 	if c.child.Type() == "verifier" {
 		c.knownVerifierNames = append(c.knownVerifierNames, c.child.GetName())
 	}
-	
+
 	msg_content := strings.Join(c.knownSiteNames, utils.PearD_SITE_SEPARATOR)
 	if len(c.knownVerifierNames) > 0 {
 		msg_content += utils.PearD_VERIFIER_SEPARATOR + strings.Join(c.knownVerifierNames, utils.PearD_SITE_SEPARATOR)
 	}
-	
+
 	// Display update nb of site as all other nodes will do when receiving:
-	format.Display(format.Format_g(c.GetName(), "ClosePearDis()", "Updated nb sites to " + strconv.Itoa(c.nbOfKnownSites)))
+	format.Display(format.Format_g(c.GetName(), "ClosePearDis()", "Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
 
 	knownSiteNames := c.knownSiteNames
 	c.mu.Unlock()
@@ -959,131 +961,141 @@ func (c *ControlLayer) SawThatMessageBefore(msg string) bool {
 	return true
 }
 
+//	func (c *ControlLayer) CheckSnapshotCoherence() {
+//		c.mu.Lock()
+//
+//		// Copie des données locales pour traitement sans verrou
+//		snapshots := make(map[string]SnapshotData)
+//		for id, snap := range c.receivedSnapshots {
+//			if !strings.Contains(id, "control") {
+//				snapshots[id] = snap
+//			}
+//		}
+//		c.mu.Unlock()
+//
+//		ids := []string{}
+//		for id := range snapshots {
+//			ids = append(ids, id)
+//		}
+//
+//		// Cas trivial
+//		if len(ids) <= 1 {
+//			c.SaveSnapshotToCSVThreadSafe(snapshots)
+//			return
+//		}
+//
+//		// Vérifier compatibilité
+//		for i := 0; i < len(ids); i++ {
+//			for j := i + 1; j < len(ids); j++ {
+//				if !utils.VectorClockCompatible(snapshots[ids[i]].VectorClock, snapshots[ids[j]].VectorClock) {
+//					format.Display(format.Format_e(
+//						c.GetName(), "CheckSnapshotCoherence()",
+//						"❌ Snapshots incohérents entre "+ids[i]+" et "+ids[j]))
+//					c.SaveSnapshotToCSVThreadSafe(snapshots)
+//					return
+//				}
+//			}
+//		}
+//
+//		format.Display(format.Format_g(
+//			c.GetName(), "CheckSnapshotCoherence()",
+//			"✅ Snapshots cohérents entre tous les capteurs"))
+//
+//		c.SaveSnapshotToCSVThreadSafe(snapshots)
+//	}
+//
+//	func (c *ControlLayer) getSensorNames() []string {
+//		sensors := []string{}
+//		for _, name := range c.knownSiteNames {
+//			if strings.HasPrefix(name, "sensor") {
+//				sensors = append(sensors, name)
+//			}
+//		}
+//		return sensors
+//	}
+//
+//	func (c *ControlLayer) PrintSnapshotsTable() {
+//		c.mu.Lock()
+//		defer c.mu.Unlock()
+//
+//		fmt.Println()
+//		fmt.Println("📦  Snapshots reçus (" + strconv.Itoa(len(c.receivedSnapshots)) + " capteurs)")
+//		fmt.Println("────────────────────────────────────────────────────────────")
+//		fmt.Printf("| %-15s | %-22s | %-15s |\n", "Capteur", "Horloge vectorielle", "Valeurs")
+//		fmt.Println("────────────────────────────────────────────────────────────")
+//
+//		for sensor, snapshot := range c.receivedSnapshots {
+//			vcStr := fmt.Sprintf("%v", snapshot.VectorClock)
+//			valStr := fmt.Sprintf("%v", snapshot.Values)
+//			if len(valStr) > 15 {
+//				valStr = valStr[:12] + "..."
+//			}
+//			fmt.Printf("| %-15s | %-22s | %-15s |\n", sensor, vcStr, valStr)
+//		}
+//
+//		fmt.Println("────────────────────────────────────────────────────────────")
+//		fmt.Println()
+//	}
+//
+//	func (c *ControlLayer) SaveSnapshotToCSV() {
+//		c.mu.Lock()
+//		defer c.mu.Unlock()
+//
+//		// Nom dynamique basé sur l’horloge Lamport du contrôleur
+//		filename := fmt.Sprintf("snapshot_%d.csv", c.vectorClock[c.nodeIndex])
+//
+//		file, err := os.Create(filename)
+//		if err != nil {
+//			fmt.Printf("❌ Erreur création fichier %s: %v\n", filename, err)
+//			return
+//		}
+//		defer file.Close()
+//
+//		// Écrire l’en-tête
+//		_, _ = file.WriteString("Capteur,HorlogeVectorielle,Valeurs\n")
+//
+//		// Écrire chaque ligne
+//		for sensor, snapshot := range c.receivedSnapshots {
+//			vcStr := strings.ReplaceAll(fmt.Sprint(snapshot.VectorClock), " ", "")
+//			valStr := strings.ReplaceAll(fmt.Sprint(snapshot.Values), " ", "")
+//			line := fmt.Sprintf("%s,\"%s\",\"%s\"\n", sensor, vcStr, valStr)
+//			_, _ = file.WriteString(line)
+//		}
+//
+//		fmt.Printf("📁 État global sauvegardé dans %s\n", filename)
+//	}
+func (c *ControlLayer) SaveSnapshotToCSVThreadSafe(snapshots map[string]SnapshotData) {
+	file, err := os.Create("snapshot.csv")
+	if err != nil {
+		log.Println("Erreur création fichier snapshot:", err)
+		return
+	}
+	defer file.Close()
 
-//
-//
-// func (c *ControlLayer) CheckSnapshotCoherence() {
-// 	c.mu.Lock()
-//
-// 	// Copie des données locales pour traitement sans verrou
-// 	snapshots := make(map[string]SnapshotData)
-// 	for id, snap := range c.receivedSnapshots {
-// 		if !strings.Contains(id, "control") {
-// 			snapshots[id] = snap
-// 		}
-// 	}
-// 	c.mu.Unlock()
-//
-// 	ids := []string{}
-// 	for id := range snapshots {
-// 		ids = append(ids, id)
-// 	}
-//
-// 	// Cas trivial
-// 	if len(ids) <= 1 {
-// 		c.SaveSnapshotToCSVThreadSafe(snapshots)
-// 		return
-// 	}
-//
-// 	// Vérifier compatibilité
-// 	for i := 0; i < len(ids); i++ {
-// 		for j := i + 1; j < len(ids); j++ {
-// 			if !utils.VectorClockCompatible(snapshots[ids[i]].VectorClock, snapshots[ids[j]].VectorClock) {
-// 				format.Display(format.Format_e(
-// 					c.GetName(), "CheckSnapshotCoherence()",
-// 					"❌ Snapshots incohérents entre "+ids[i]+" et "+ids[j]))
-// 				c.SaveSnapshotToCSVThreadSafe(snapshots)
-// 				return
-// 			}
-// 		}
-// 	}
-//
-// 	format.Display(format.Format_g(
-// 		c.GetName(), "CheckSnapshotCoherence()",
-// 		"✅ Snapshots cohérents entre tous les capteurs"))
-//
-// 	c.SaveSnapshotToCSVThreadSafe(snapshots)
-// }
-//
-// func (c *ControlLayer) getSensorNames() []string {
-// 	sensors := []string{}
-// 	for _, name := range c.knownSiteNames {
-// 		if strings.HasPrefix(name, "sensor") {
-// 			sensors = append(sensors, name)
-// 		}
-// 	}
-// 	return sensors
-// }
-//
-// func (c *ControlLayer) PrintSnapshotsTable() {
-// 	c.mu.Lock()
-// 	defer c.mu.Unlock()
-//
-// 	fmt.Println()
-// 	fmt.Println("📦  Snapshots reçus (" + strconv.Itoa(len(c.receivedSnapshots)) + " capteurs)")
-// 	fmt.Println("────────────────────────────────────────────────────────────")
-// 	fmt.Printf("| %-15s | %-22s | %-15s |\n", "Capteur", "Horloge vectorielle", "Valeurs")
-// 	fmt.Println("────────────────────────────────────────────────────────────")
-//
-// 	for sensor, snapshot := range c.receivedSnapshots {
-// 		vcStr := fmt.Sprintf("%v", snapshot.VectorClock)
-// 		valStr := fmt.Sprintf("%v", snapshot.Values)
-// 		if len(valStr) > 15 {
-// 			valStr = valStr[:12] + "..."
-// 		}
-// 		fmt.Printf("| %-15s | %-22s | %-15s |\n", sensor, vcStr, valStr)
-// 	}
-//
-// 	fmt.Println("────────────────────────────────────────────────────────────")
-// 	fmt.Println()
-// }
-//
-// func (c *ControlLayer) SaveSnapshotToCSV() {
-// 	c.mu.Lock()
-// 	defer c.mu.Unlock()
-//
-// 	// Nom dynamique basé sur l’horloge Lamport du contrôleur
-// 	filename := fmt.Sprintf("snapshot_%d.csv", c.vectorClock[c.nodeIndex])
-//
-// 	file, err := os.Create(filename)
-// 	if err != nil {
-// 		fmt.Printf("❌ Erreur création fichier %s: %v\n", filename, err)
-// 		return
-// 	}
-// 	defer file.Close()
-//
-// 	// Écrire l’en-tête
-// 	_, _ = file.WriteString("Capteur,HorlogeVectorielle,Valeurs\n")
-//
-// 	// Écrire chaque ligne
-// 	for sensor, snapshot := range c.receivedSnapshots {
-// 		vcStr := strings.ReplaceAll(fmt.Sprint(snapshot.VectorClock), " ", "")
-// 		valStr := strings.ReplaceAll(fmt.Sprint(snapshot.Values), " ", "")
-// 		line := fmt.Sprintf("%s,\"%s\",\"%s\"\n", sensor, vcStr, valStr)
-// 		_, _ = file.WriteString(line)
-// 	}
-//
-// 	fmt.Printf("📁 État global sauvegardé dans %s\n", filename)
-// }
-//
-// func (c *ControlLayer) SaveSnapshotToCSVThreadSafe(snapshots map[string]SnapshotData) {
-// 	file, err := os.Create("snapshot.csv")
-// 	if err != nil {
-// 		log.Println("Erreur création fichier snapshot:", err)
-// 		return
-// 	}
-// 	defer file.Close()
-//
-// 	writer := csv.NewWriter(file)
-// 	defer writer.Flush()
-//
-// 	writer.Write([]string{"ID", "Vector Clock", "Values"})
-//
-// 	for id, snap := range snapshots {
-// 		writer.Write([]string{
-// 			id,
-// 			utils.SerializeVectorClock(snap.VectorClock),
-// 			strings.Join(utils.Float32SliceToStringSlice(snap.Values), ";"),
-// 		})
-// 	}
-// }
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// En-tête détaillé
+	writer.Write([]string{
+		"NodeName",
+		"Initiator",
+		"VectorClock",
+		"Content",
+		"BufferedMessages",
+	})
+
+	for _, snap := range snapshots {
+		// Concatène les messages bufferisés en une seule chaîne
+		buffered := ""
+		if len(snap.BufferedMsg) > 0 {
+			buffered = strings.Join(snap.BufferedMsg, " || ")
+		}
+		writer.Write([]string{
+			snap.NodeName,
+			snap.Initiator,
+			utils.SerializeVectorClock(snap.VectorClock),
+			snap.Content,
+			buffered,
+		})
+	}
+}
