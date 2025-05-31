@@ -1,4 +1,8 @@
 NodeName,Initiator,VectorClock,Content,BufferedMessages
-control (0_control),control (0_control),"70,55,81","sensor (1):sensor (1)_1,sensor (1)_2,sensor (1)_3,sensor (1)_4,sensor (1)_5,sensor (1)_6,sensor (1)_7,sensor (1)_8,@",
-control (1_control),control (0_control),"63,54,70","112.22, 94.80, 28.01, 26.57, 168.74, 25.95, 107.85, 25.15",
-control (2_control),control (0_control),"69,52,70","sensor (1): [sensor (1)_1,32.00,21,true,verifier (2);sensor (1)_2,94.80,36,false,;sensor (1)_3,28.01,39,true,verifier (2);sensor (1)_4,26.57,50,true,verifier (2);sensor (1)_5,32.00,59,true,verifier (2);sensor (1)_6,25.95,74,false,;sensor (1)_7,107.85,77,false,;sensor (1)_8,25.15,84,false,;]@",
+control (3_control),control (0_control),"47,52,46,49,43,43,47","sensor (2):sensor (2)_1,@sensor (0):sensor (0)_1,@sensor (4):sensor (4)_58,@",
+control (0_control),control (0_control),"52,50,38,40,39,39,47",20.33,
+control (6_control),control (0_control),"47,50,38,40,39,39,54","sensor (0): [sensor (0)_1,20.33,51,false,;]@sensor (2): [sensor (2)_1,134.74,60,false,;]@sensor (4): [sensor (4)_58,94.08,98,false,;]@",
+control (5_control),control (0_control),"47,50,38,40,39,49,52","sensor (2):sensor (2)_1,@sensor (4):sensor (4)_58,@sensor (0):sensor (0)_1,@",
+control (4_control),control (0_control),"47,50,42,46,48,47,52",94.08,
+control (1_control),control (0_control),"47,54,38,40,39,39,47","sensor (0): [sensor (0)_1,20.33,47,false,;]@sensor (2): [sensor (2)_1,134.74,50,false,;]@sensor (4): [sensor (4)_58,94.08,100,false,;]@",
+control (2_control),control (0_control),"47,52,48,44,43,43,47",134.74,

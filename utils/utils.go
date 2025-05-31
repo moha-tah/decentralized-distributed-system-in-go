@@ -20,11 +20,12 @@ func SynchroniseVectorClock(vc1 []int, vc2 []int, caller_index int) []int {
 		panic("utils.SynchroniseVectorClock: vector clocks must be of the same length. Got " +
 			strconv.Itoa(len(vc1)) + " and " + strconv.Itoa(len(vc2)))
 	}
+	newVC := make([]int, len(vc1))
 	for i := 0; i < len(vc1); i++ {
-		vc1[i] = max(vc1[i], vc2[i])
+		newVC[i] = max(vc1[i], vc2[i])
 	}
-	vc1[caller_index] += 1
-	return vc1
+	newVC[caller_index] += 1
+	return newVC
 }
 
 func RemoveAllOccurrencesInt(slice []int, value int) []int {
