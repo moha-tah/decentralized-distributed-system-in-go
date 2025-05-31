@@ -154,9 +154,6 @@ func (c *ControlLayer) sendSnapshotResponse() {
 	if c.parentNodeName == c.GetName() {
 		c.mu.Lock()
 		format.Display(format.Format_g(c.GetName(), "SendSnap()", "✅✅✅ Snapshot algorithm finished for snapshot id "+c.subTreeState.SnapshotId))
-		for _, childState := range c.subTreeState.Data {
-			format.Display(format.Format_g(c.GetName(), "SendSnap()", "Child state: "+SerializeSnapshotData(childState)))
-		}
 		// AJOUT : Sauvegarde la snapshot dans un CSV
 		snapshots := make(map[string]SnapshotData)
 		for _, childState := range c.subTreeState.Data {
@@ -186,7 +183,6 @@ func (c *ControlLayer) sendSnapshotResponse() {
 	// c.subTreeState.VectorClock[c.nodeIndex] += 1 // As response will be sent = sending action = +1
 
 	snap_content := SerializeGlobalSnapshot(c.subTreeState)
-	format.Display(format.Format_e(c.GetName(), "SendSnap()", utils.SerializeVectorClock(c.vectorClock) + ", sub: " + utils.SerializeVectorClock(c.subTreeState.Data[0].VectorClock) + ", nodeIndex: " + strconv.Itoa(c.nodeIndex)))
 	c.snapResponseSent = true
 	c.mu.Unlock()
 
