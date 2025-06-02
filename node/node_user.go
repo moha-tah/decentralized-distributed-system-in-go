@@ -148,17 +148,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 				u.GetName(), "HandleMessage()",
 				"📦 snapshot_request reçu"))
 
-			// Incrémenter horloge vectorielle
-			vcStr := format.Findval(msg, "vector_clock", u.GetName())
-			recvVC, err := utils.DeserializeVectorClock(vcStr)
-			if err == nil {
-				for i := 0; i < len(u.vectorClock); i++ {
-					u.vectorClock[i] = utils.Max(u.vectorClock[i], recvVC[i])
-				}
-				u.vectorClock[u.nodeIndex] += 1
-			}
-
-			// Créer la réponse avec horloge vectorielle uniquement
+			// Create answer
 			msgID := u.GenerateUniqueMessageID()
 			u.mu.Lock()
 			response := format.Msg_format_multi(format.Build_msg_args(
@@ -788,3 +778,16 @@ func (u *UserNode) handleAPIData(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (n* UserNode) GetLocalState() string {
+	n.mu.Lock()
+	snap_content := ""
+	for senderID, readings := range n.recentReadings {
+		snap_content += senderID + ":"
+		for _, reading := range readings {
+			snap_content += reading.ReadingID + ","
+		}
+		snap_content += utils.PearD_SITE_SEPARATOR
+	}
+	n.mu.Unlock()
+	return snap_content
+}

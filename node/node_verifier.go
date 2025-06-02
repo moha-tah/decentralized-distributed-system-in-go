@@ -955,3 +955,17 @@ func (v *VerifierNode) logReceivedReading(sender string, temperature float64, st
 		f.WriteString(line)
 	}
 }
+func (n* VerifierNode) GetLocalState() string {
+	n.mu.Lock()
+	snap_content := ""
+	for senderID, readings := range n.recentReadings {
+		snap_content += senderID + ": ["
+		for _, reading := range readings {
+			snap_content += reading.ReadingID + ","+strconv.FormatFloat(float64(reading.Temperature), 'f', 2, 32) + "," + strconv.Itoa(reading.Clock) + "," + strconv.FormatBool(reading.IsVerified) + "," + reading.VerifierID + ";"
+		}
+		snap_content += "]"
+		snap_content += utils.PearD_SITE_SEPARATOR
+	}
+	n.mu.Unlock()
+	return snap_content
+}

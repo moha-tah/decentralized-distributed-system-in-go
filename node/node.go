@@ -30,6 +30,14 @@ type Node interface {
 
 	// InitVectorClockWithSites initializes the vector clock with the given site names
 	InitVectorClockWithSites(siteNames []string)
+
+	GetLocalState() string
+}
+
+type Cut struct {
+	id	string
+	cut_vc	[]int // Cut's vector clock
+	states	map[string]string // states of the nodes in the cut
 }
 
 // BaseNode implements common functionality for all node types
