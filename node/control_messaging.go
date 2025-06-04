@@ -18,7 +18,7 @@ func (c *ControlLayer) propagateMessage(msg string) {
 // AddNewMessageId adds an entry in the seenIDs to remember
 // that the control layer saw this message.
 func (c *ControlLayer) AddNewMessageId(sender_name string, MID_str string) {
-	msg_NbMessageSent, err := utils.MIDFromString(MID_str)
+	msg_NbMessageSent, err := format.MIDFromString(MID_str)
 	if err != nil {
 		format.Display(format.Format_e("AddNewMessageID()", c.GetName(), "Error in message id: "+err.Error()))
 	}
@@ -87,11 +87,11 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs ...bool) {
 
 	// As this node sends the message, it doens't want to receive
 	// a duplicate => add the message ID to ID watcher
-	var msg_id_str string = format.Findval(msg, "id", c.GetName())
+	var msg_id_str string = format.Findval(msg, "id")
 	var msg_splits []string = strings.Split(msg_id_str, "_")
 	var msg_NbMessageSent_str string = msg_splits[len(msg_splits)-1]
 	// The sender can also be the app layer, so check for that:
-	var msg_sender string = format.Findval(msg, "sender_name_source", c.GetName())
+	var msg_sender string = format.Findval(msg, "sender_name_source")
 	c.AddNewMessageId(msg_sender, msg_NbMessageSent_str)
 
 	c.mu.Lock()
@@ -114,7 +114,8 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs ...bool) {
 			format.Display(format.Format_w(c.GetName(), "SendMsg()", "Channel appears to be blocked"))
 		}
 	} else {
-		format.Msg_send(msg, c.GetName())
+		// format.Msg_send(msg, c.GetName())
+		c.networkLayer.SendMessage(msg, nil)
 	}
 
 	c.mu.Lock()
@@ -129,17 +130,17 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs ...bool) {
 // it adds it to the interval (see utils.message_watch)
 // and return false.
 func (c *ControlLayer) SawThatMessageBefore(msg string) bool {
-	var msg_id_str string = format.Findval(msg, "id", c.GetName())
+	var msg_id_str string = format.Findval(msg, "id")
 
 	var msg_splits []string = strings.Split(msg_id_str, "_")
 	var msg_NbMessageSent_str string = msg_splits[len(msg_splits)-1]
 
-	msg_NbMessageSent, err := utils.MIDFromString(msg_NbMessageSent_str)
+	msg_NbMessageSent, err := format.MIDFromString(msg_NbMessageSent_str)
 	if err != nil {
 		format.Display(format.Format_e("SawThatMessageBefore()", c.GetName(), "Error in message id: "+err.Error()))
 	}
 
-	var sender_name string = format.Findval(msg, "sender_name_source", c.GetName())
+	var sender_name string = format.Findval(msg, "sender_name_source")
 
 	// Never saw that message before
 	c.mu.Lock()

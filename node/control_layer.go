@@ -1,15 +1,15 @@
 package node
 
 import (
-	"bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
 	"distributed_system/format"
 	"distributed_system/utils"
-	"os" // Use for the bufio reader: reads from os stdin
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
-	"time"
+	// "time"
+	// "strings"
+	// "os" // Use for the bufio reader: reads from os stdin
+	// "bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
 )
 
 type ControlLayer struct {
@@ -27,7 +27,7 @@ type ControlLayer struct {
 	nbMsgSent uint64
 	// Seen IDs of all received messages:
 	// To help preventing the reading of same msg if it loops
-	IDWatcher              *utils.MIDWatcher
+	IDWatcher              *format.MIDWatcher
 	channel_to_application chan string
 
 	nbOfKnownSites       int
@@ -50,6 +50,9 @@ type ControlLayer struct {
 	directNeighbors       []string
 	directNeighborsEnd    bool // true when we know our neighbors (delay of 1s after neighbor discovery)
 	nbExpectedTreeAnswers int
+
+	// Network related fields:
+	networkLayer 		*NetworkLayer // Reference to the network layer for sending messages
 }
 
 func (c *ControlLayer) GetName() string {
@@ -69,7 +72,7 @@ func NewControlLayer(id string, child Node) *ControlLayer {
 		nodeIndex:              0,
 		child:                  child,
 		nbMsgSent:              0,
-		IDWatcher:              utils.NewMIDWatcher(),
+		IDWatcher:              format.NewMIDWatcher(),
 		channel_to_application: make(chan string, 10), // Buffered channel
 		nbOfKnownSites:         0,
 		sentDiscoveryMessage:   false,
@@ -93,8 +96,12 @@ func NewControlLayer(id string, child Node) *ControlLayer {
 }
 
 // Start begins the control operations
-func (c *ControlLayer) Start() error {
+func (c *ControlLayer) Start(networkLayer* NetworkLayer) error {
 	format.Display(format.Format_d(c.GetName(), "Start()", "Starting control layer "+c.GetName()))
+
+	c.mu.Lock()
+	c.networkLayer = networkLayer // Set the network layer reference
+	c.mu.Unlock()
 
 	// Notify child that this is its control layer it must talk to.
 	c.child.SetControlLayer(c)
@@ -111,72 +118,72 @@ func (c *ControlLayer) Start() error {
 	// the call) after 1 seconds.
 	// 🔥ONLY node whose id is zero will send this message.
 	if c.id == "0_control" {
-		go func() {
-			// 1. Wait for all control layer to be instanciated
-			time.Sleep(time.Duration(1) * time.Second)
-
-			// 2. Send pear discovery to know all nodes in the network
-			c.SendPearDiscovery()
-			time.Sleep(time.Duration(2) * time.Second)
-
-			// 3. Close the pear discovery (=send all received names to all nodes)
-			c.ClosePearDiscovery() // Will send known names to all nodes
-			time.Sleep(time.Duration(1) * time.Second)
-
-			// 4. Start tree construction only after we know our neighbors
-			c.mu.Lock()
-			directNeighborsEnd := c.directNeighborsEnd
-			c.mu.Unlock()
-			for directNeighborsEnd == false {
-				time.Sleep(time.Duration(100) * time.Millisecond)
-				c.mu.Lock()
-				directNeighborsEnd = c.directNeighborsEnd
-				c.mu.Unlock()
-			}
-			c.SendTreeConstruction()
-		}()
-		//demande de snapshot après 5 secondes
-		go func() {
-			time.Sleep(6 * time.Second) // attendre que tout soit initialisé
-			format.Display(format.Format_d("Start()", c.GetName(), "⏳ 10s écoulées, envoi de la requête snapshot..."))
-			c.RequestSnapshot()
-			format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
-			time.Sleep(3 * time.Second) // attendre que tout soit initialisé
-			format.Display(format.Format_d("Start()", c.GetName(), "⏳ 10s écoulées, envoi de la requête snapshot..."))
-			c.RequestSnapshot()
-			format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
-		}()
+		// go func() {
+		// 	// 1. Wait for all control layer to be instanciated
+		// 	time.Sleep(time.Duration(1) * time.Second)
+		//
+		// 	// 2. Send pear discovery to know all nodes in the network
+		// 	c.SendPearDiscovery()
+		// 	time.Sleep(time.Duration(2) * time.Second)
+		//
+		// 	// 3. Close the pear discovery (=send all received names to all nodes)
+		// 	c.ClosePearDiscovery() // Will send known names to all nodes
+		// 	time.Sleep(time.Duration(1) * time.Second)
+		//
+		// 	// 4. Start tree construction only after we know our neighbors
+		// 	c.mu.Lock()
+		// 	directNeighborsEnd := c.directNeighborsEnd
+		// 	c.mu.Unlock()
+		// 	for directNeighborsEnd == false {
+		// 		time.Sleep(time.Duration(100) * time.Millisecond)
+		// 		c.mu.Lock()
+		// 		directNeighborsEnd = c.directNeighborsEnd
+		// 		c.mu.Unlock()
+		// 	}
+		// 	c.SendTreeConstruction()
+		// }()
+		// //demande de snapshot après 5 secondes
+		// go func() {
+		// 	time.Sleep(6 * time.Second) // attendre que tout soit initialisé
+		// 	format.Display(format.Format_d("Start()", c.GetName(), "⏳ 10s écoulées, envoi de la requête snapshot..."))
+		// 	c.RequestSnapshot()
+		// 	format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
+		// 	time.Sleep(3 * time.Second) // attendre que tout soit initialisé
+		// 	format.Display(format.Format_d("Start()", c.GetName(), "⏳ 10s écoulées, envoi de la requête snapshot..."))
+		// 	c.RequestSnapshot()
+		// 	format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
+		// }()
 	}
 
 	// ALL nodes wait, send neighbor discovery message to their direct neighbors,
 	// and then start their child.
-	go func() { // Wake up child only after pear discovery is finished
-		time.Sleep(time.Duration(4) * time.Second)
-		c.SendNeighborDiscovery()
-		time.Sleep(time.Duration(1) * time.Second)
-		c.mu.Lock()
-		c.directNeighborsEnd = true // We know our directNeighbors
-		c.mu.Unlock()
-
-		c.child.Start()
-	}()
+	// go func() { // Wake up child only after pear discovery is finished
+	// 	time.Sleep(time.Duration(4) * time.Second)
+	// 	c.SendNeighborDiscovery()
+	// 	time.Sleep(time.Duration(1) * time.Second)
+	// 	c.mu.Lock()
+	// 	c.directNeighborsEnd = true // We know our directNeighbors
+	// 	c.mu.Unlock()
+	//
+	// 	c.child.Start()
+	// }()
 
 	c.isRunning = true
 
 	// Go routine to read messages from stdin and call HandleMessage() on each new message.
-	go func() {
-		reader := bufio.NewReader(os.Stdin)
-		for {
-			rcvmsg, err := reader.ReadString('\n') // read until newline
-			if err != nil {
-				// Handle error properly, e.g., if the connection is closed
-				format.Display(format.Format_e(c.GetName(), "Start()", "Reading error: "+err.Error()))
-				return
-			}
-			rcvmsg = strings.TrimSuffix(rcvmsg, "\n") // remove the trailing newline character
-			c.HandleMessage(rcvmsg)
-		}
-	}()
+	// go func() {
+	// 	reader := bufio.NewReader(os.Stdin)
+	// 	for {
+	// 		rcvmsg, err := reader.ReadString('\n') // read until newline
+	// 		if err != nil {
+	// 			// Handle error properly, e.g., if the connection is closed
+	// 			format.Display(format.Format_e(c.GetName(), "Start()", "Reading error: "+err.Error()))
+	// 			return
+	// 		}
+	// 		rcvmsg = strings.TrimSuffix(rcvmsg, "\n") // remove the trailing newline character
+	// 		c.HandleMessage(rcvmsg)
+	// 	}
+	// }()
 
 	select {}
 }
@@ -197,7 +204,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		recVC := format.RetrieveVectorClock(msg, len(c.vectorClock))
 		c.vectorClock = utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
 	}
-	resClk, _ := strconv.Atoi(format.Findval(msg, "clk", c.GetName()))
+	resClk, _ := strconv.Atoi(format.Findval(msg, "clk"))
 	c.clk = utils.Synchronise(c.clk, resClk)
 	c.mu.Unlock()
 
@@ -209,9 +216,9 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	}
 
 	// Extract msg caracteristics
-	var msg_destination string = format.Findval(msg, "destination", c.GetName())
-	var msg_type string = format.Findval(msg, "type", c.GetName())
-	var sender_name_source string = format.Findval(msg, "sender_name_source", c.GetName())
+	var msg_destination string = format.Findval(msg, "destination")
+	var msg_type string = format.Findval(msg, "type")
+	var sender_name_source string = format.Findval(msg, "sender_name_source")
 
 	// Will be used at the end to check if
 	// control layer needs to resend the message to all other nodes
@@ -318,7 +325,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	}
 
 	// Propagate the message to other nodes if needed
-	msg_propagate_field := format.Findval(msg, "propagation", c.GetName())
+	msg_propagate_field := format.Findval(msg, "propagation")
 	if propagate_msg && msg_propagate_field != "false" { // Check if propagation disabled for this msg
 		c.propagateMessage(msg)
 	}

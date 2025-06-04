@@ -81,7 +81,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 	for msg := range channel {
 		u.mu.Lock()
 
-		rec_clk_str := format.Findval(msg, "clk", u.GetName())
+		rec_clk_str := format.Findval(msg, "clk")
 		rec_clk, _ := strconv.Atoi(rec_clk_str)
 		u.clk = utils.Synchronise(u.clk, rec_clk)
 		clk_int := u.clk
@@ -91,9 +91,9 @@ func (u *UserNode) HandleMessage(channel chan string) {
 		// }
 		u.mu.Unlock()
 
-		var msg_type string = format.Findval(msg, "type", u.GetName())
-		var msg_content_value string = format.Findval(msg, "content_value", u.GetName())
-		var msg_sender string = format.Findval(msg, "sender_name", u.GetName())
+		var msg_type string = format.Findval(msg, "type")
+		var msg_content_value string = format.Findval(msg, "content_value")
+		var msg_sender string = format.Findval(msg, "sender_name")
 
 		switch msg_type {
 		case "new_reading":
@@ -129,7 +129,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 				queue = queue[1:]
 			}
 			queue = append(queue, models.Reading{
-				ReadingID: format.Findval(msg, "item_id", u.GetName()),
+				ReadingID: format.Findval(msg, "item_id"),
 				Temperature: float32(readingVal),
 				Clock:   clk_int,
 				SensorID:    msg_sender,
@@ -157,7 +157,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 				"sender_name", u.GetName(),
 				"sender_name_source", u.GetName(),
 				"sender_type", u.Type(),
-				"destination", format.Findval(msg, "sender_name_source", u.GetName()),
+				"destination", format.Findval(msg, "sender_name_source"),
 				"clk", strconv.Itoa(u.clk),
 				"vector_clock", utils.SerializeVectorClock(u.vectorClock),
 				"content_type", "snapshot_data",
@@ -220,10 +220,10 @@ func (v *UserNode) SendMessage(msg string, toHandleMessageArgs...bool) {
 // which also contains the verified value.
 func (n *UserNode) handleLockRelease(msg string) {
 	// Extract information from the message
-	itemID := format.Findval(msg, "item_id", n.GetName())
+	itemID := format.Findval(msg, "item_id")
 	sensorID := strings.Split(itemID, "_")[0]
-	verifier := format.Findval(msg, "sender_name_source", n.GetName())
-	verifiedValueStr := format.Findval(msg, "content_value", n.GetName())
+	verifier := format.Findval(msg, "sender_name_source")
+	verifiedValueStr := format.Findval(msg, "content_value")
 	verifiedValue, err := strconv.ParseFloat(verifiedValueStr, 32)
 	if err != nil {
 		format.Display(format.Format_e(n.GetName(), "handleLockRelease()", "Error parsing verified value: "+verifiedValueStr))

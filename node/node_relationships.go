@@ -33,7 +33,7 @@ func (c *ControlLayer) SendTreeConstruction() {
 
 // Tree construction logic (blue messages from lecture)
 func (c *ControlLayer) processBlueTree(msg string) {
-	sender_name_source := format.Findval(msg, "sender_name_source", c.GetName())
+	sender_name_source := format.Findval(msg, "sender_name_source")
 	tree_answer := format.Msg_format_multi(format.Build_msg_args(
 		"id", c.GenerateUniqueMessageID(),
 		"type", "tree_red",
@@ -80,8 +80,8 @@ func (c *ControlLayer) processBlueTree(msg string) {
 }
 
 func (c* ControlLayer) processRedTree(msg string) {
-	sender_name_source := format.Findval(msg, "sender_name_source", c.GetName())
-	is_my_child_str := format.Findval(msg, "child", c.GetName())
+	sender_name_source := format.Findval(msg, "sender_name_source")
+	is_my_child_str := format.Findval(msg, "child")
 	is_my_child, err := strconv.ParseBool(is_my_child_str)
 	if is_my_child_str == "" {
 		is_my_child = false
@@ -138,7 +138,7 @@ func (c *ControlLayer) SendPearDiscoveryAnswer(msg string) {
 		// Content type and msg type:
 		"siteName", "pear_discovery_answer",
 		// Destination = source written in content_value:
-		format.Findval(msg, "content_value", c.GetName()),
+		format.Findval(msg, "content_value"),
 		// Msg ID and source:
 		"", c.GetName())
 
@@ -185,7 +185,7 @@ func (c *ControlLayer) ClosePearDiscovery() {
 
 func (c* ControlLayer) HandlePearDiscoverySealing(msg string) {
 
-	var names_in_message string = format.Findval(msg, "content_value", c.GetName())
+	var names_in_message string = format.Findval(msg, "content_value")
 
 	// for each site, retrieve its name and verifier name (if applicable):
 	sites_verifiers_parts := strings.Split(names_in_message, utils.PearD_VERIFIER_SEPARATOR)
@@ -217,7 +217,7 @@ func (c* ControlLayer) HandlePearDiscoverySealing(msg string) {
 	if c.child.Type() == "verifier" {
 		// Send to child app through channel
 		msg_to_verifier := format.Msg_format_multi(format.Build_msg_args(
-			"id", format.Findval(msg, "id", c.GetName()),
+			"id", format.Findval(msg, "id"),
 			"type", "pear_discovery_verifier",
 			"sender_name_source", c.GetName(),
 			"sender_name", c.GetName(),
@@ -237,7 +237,7 @@ func (c* ControlLayer) HandlePearDiscoverySealing(msg string) {
 func (c* ControlLayer) HandlePearDiscoveryAnswerFromResponsibleNode(msg string) {
 	// Only the node responsible for the pear discovery will read these
 	// lines, as direct messaging only target this node in pear discovery process.
-	var newSiteName string = format.Findval(msg, "content_value", c.GetName())
+	var newSiteName string = format.Findval(msg, "content_value")
 
 	// Extract the verifier name (if applicable):
 	var verifierName string = ""

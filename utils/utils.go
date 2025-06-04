@@ -142,3 +142,47 @@ func Float32SliceToStringSlice(floats []float32) []string {
 	}
 	return strs
 }
+
+func ExtractIDFromName(name string) (int, error) {
+	// format is "type (id)"
+	idStr_parts := strings.Split(name, "(")
+	if len(idStr_parts) != 2 {
+		return -1, fmt.Errorf("error parsing id from %q: expected format 'type (id)'", name)
+	}
+	idStr := idStr_parts[1]
+	idStr = strings.TrimSuffix(idStr, ")")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return -1, fmt.Errorf("error parsing id from %q: %v", name, err)
+	}
+	return id, nil
+}
+
+// =============== ELECTION ===============
+// Extract the id from the node names and return
+// the minimum id
+func UpdateLeader(name1, name2 string) (string, error) {
+	if name1 == "" && name2 == "" {
+		return "", fmt.Errorf("utils.updateLeader: both names are empty")
+	} else if name1 == "" {
+		return name2, nil
+	} else if name2 == "" {
+		return name1, nil
+	}
+
+	// Retrieve ID from the sender name
+	id1, err := ExtractIDFromName(name1)
+	if err != nil {
+		panic(fmt.Sprintf("utils.updateLeader: error parsing id1 from %q: %v", name1, err))
+	}
+
+	id2, err := ExtractIDFromName(name2)
+	if err != nil {
+		panic(fmt.Sprintf("utils.updateLeader: error parsing id2 from %q: %v", name2, err))
+	}
+	if id1 < id2 {
+		return name1, nil
+	}
+	return name2, nil
+
+}

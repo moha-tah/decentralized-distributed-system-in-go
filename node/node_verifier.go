@@ -115,7 +115,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 	for msg := range channel {
 		v.mu.Lock()
 
-		rec_clk, _ := strconv.Atoi(format.Findval(msg, "clk", v.GetName()))
+		rec_clk, _ := strconv.Atoi(format.Findval(msg, "clk"))
 		v.clk = utils.Synchronise(v.clk, rec_clk)
 		clk_int := v.clk
 		// if v.vectorClockReady == true {
@@ -124,9 +124,9 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 		// }
 		v.mu.Unlock()
 
-		var msg_type string = format.Findval(msg, "type", v.GetName())
-		var msg_content_value string = format.Findval(msg, "content_value", v.GetName())
-		var msg_sender string = format.Findval(msg, "sender_name_source", v.GetName()) // Get sender ID
+		var msg_type string = format.Findval(msg, "type")
+		var msg_content_value string = format.Findval(msg, "content_value")
+		var msg_sender string = format.Findval(msg, "sender_name_source") // Get sender ID
 
 		switch msg_type {
 		case "new_reading":
@@ -158,7 +158,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 				queue = queue[1:]
 			}
 			queue = append(queue, models.Reading{
-				ReadingID: format.Findval(msg, "item_id", v.GetName()),
+				ReadingID: format.Findval(msg, "item_id"),
 				Temperature: float32(readingVal),
 				Clock:      clk_int,
 				SensorID:    msg_sender,
@@ -187,7 +187,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 				v.GetName(), "HandleMessage()",
 				"📦 snapshot_request reçu"))
 
-			vcStr := format.Findval(msg, "vector_clock", v.GetName())
+			vcStr := format.Findval(msg, "vector_clock")
 			recvVC, err := utils.DeserializeVectorClock(vcStr)
 			if err == nil {
 				for i := 0; i < len(v.vectorClock); i++ {
@@ -204,7 +204,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 				"sender_name", v.GetName(),
 				"sender_name_source", v.GetName(),
 				"sender_type", v.Type(),
-				"destination", format.Findval(msg, "sender_name_source", v.GetName()),
+				"destination", format.Findval(msg, "sender_name_source"),
 				"clk", strconv.Itoa(v.clk),
 				"vector_clock", utils.SerializeVectorClock(v.vectorClock),
 				"content_type", "snapshot_data",
@@ -234,7 +234,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 
 		case "lock_request_cancelled":
 			// Remove the lock request for this item 
-			itemID := format.Findval(msg, "item_id", v.GetName()) 
+			itemID := format.Findval(msg, "item_id") 
 			v.mu.Lock() 
 			// Remove the lock request from our map 
 			delete(v.lockRequests, itemID) 
@@ -447,20 +447,20 @@ func (v *VerifierNode) requestLock(reading models.Reading) {
 // handleLockRequest processes a lock request from another verifier
 func (v *VerifierNode) handleLockRequest(msg string) {
 	// Extract information from the message
-	senderID := format.Findval(msg, "sender_name_source", v.GetName())
-	requestedSenderID := format.Findval(msg, "sender_id", v.GetName())
-	indexStr := format.Findval(msg, "index", v.GetName())
-	itemID := format.Findval(msg, "item_id", v.GetName())
+	senderID := format.Findval(msg, "sender_name_source")
+	requestedSenderID := format.Findval(msg, "sender_id")
+	indexStr := format.Findval(msg, "index")
+	itemID := format.Findval(msg, "item_id")
 
 
 	// msg_VC := format.RetrieveVectorClock(msg, len(v.vectorClock))
-	msgVC_index_str := format.Findval(msg, "request_clk", v.GetName())
+	msgVC_index_str := format.Findval(msg, "request_clk")
 	msgVC_index, err := strconv.Atoi(msgVC_index_str)
 	if err != nil {
 		format.Display(format.Format_e(v.GetName(), "handleLockRequest()", "Error parsing vector clock: "+msgVC_index_str))
 		return
 	}
-	msg_clk_str := format.Findval(msg, "clk", v.GetName())
+	msg_clk_str := format.Findval(msg, "clk")
 	msg_clk, err := strconv.Atoi(msg_clk_str)
 	if err != nil {
 		format.Display(format.Format_e(v.GetName(), "handleLockRequest()", "Error parsing vector clock: "+msgVC_index_str))
@@ -525,9 +525,9 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 func (v *VerifierNode) handleLockReply(msg string) {
 
 	// Extract information from the message
-	senderID := format.Findval(msg, "sender_name_source", v.GetName())
-	itemID := format.Findval(msg, "item_id", v.GetName())
-	grantedStr := format.Findval(msg, "granted", v.GetName())
+	senderID := format.Findval(msg, "sender_name_source")
+	itemID := format.Findval(msg, "item_id")
+	grantedStr := format.Findval(msg, "granted")
 
 	granted, err := strconv.ParseBool(grantedStr)
 	if err != nil {
@@ -651,8 +651,8 @@ func (v *VerifierNode) acquiredFullLockOnItem(itemID string) {
 // handleLockAcquired processes a lock acquired message from another verifier
 func (v *VerifierNode) handleLockAcquired(msg string) {
 	// Extract information from the message
-	itemID := format.Findval(msg, "item_id", v.GetName())
-	senderID := format.Findval(msg, "sender_name_source", v.GetName())
+	itemID := format.Findval(msg, "item_id")
+	senderID := format.Findval(msg, "sender_name_source")
 
 	v.mu.Lock()
 
@@ -848,8 +848,8 @@ func (v *VerifierNode) releaseLock(itemID string) {
 // handleLockRelease processes a lock release message from another verifier
 func (v *VerifierNode) handleLockRelease(msg string) {
 	// Extract information from the message
-	itemID := format.Findval(msg, "item_id", v.GetName())
-	verifiedValueStr := format.Findval(msg, "content_value", v.GetName())
+	itemID := format.Findval(msg, "item_id")
+	verifiedValueStr := format.Findval(msg, "content_value")
 	verifiedValue, err := strconv.ParseFloat(verifiedValueStr, 32)
 	if err != nil {
 		format.Display(format.Format_e(v.GetName(), "handleLockRelease()", "Error parsing verified value: "+verifiedValueStr))
@@ -865,7 +865,7 @@ func (v *VerifierNode) handleLockRelease(msg string) {
 	v.mu.Unlock()
 
 	// Update verified value
-	var verifier string = format.Findval(msg, "sender_name_source", v.GetName())
+	var verifier string = format.Findval(msg, "sender_name_source")
 	v.markItemAsVerified(itemID, float32(verifiedValue), verifier)
 }
 

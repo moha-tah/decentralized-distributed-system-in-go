@@ -10,11 +10,7 @@ import (
 	"strings"
 )
 
-func Findval(msg string, key string, p_nom string) string {
-	if len(msg) < 4 {
-		stderr.Print(Format_w("findval", p_nom, "message trop court : "+msg))
-		return ""
-	}
+func Findval(msg string, key string) string {
 	sep := msg[0:1]
 	tab_allkeyvals := strings.Split(msg[1:], sep)
 	for _, keyval := range tab_allkeyvals {
@@ -98,7 +94,7 @@ func Build_msg_args(args ...string) map[string]string {
 	// Check mandatory keys: at least sender_name and clk need
 	// to be present in the message = they have to be
 	// given as input to Build_msg_args
-	var mandatory_keys = []string{"sender_name", "vector_clock", "destination", "id"}
+	var mandatory_keys = []string{"sender_name", "destination", "id"}
 	for _, key := range mandatory_keys {
 		if _, ok := data[key]; !ok {
 			log.Fatal(Format_e(
@@ -134,7 +130,7 @@ func Msg_format_multi(kvPairs map[string]string) string {
 
 
 func RetrieveVectorClock(msg string, length_to_compare int) []int {
-	recVC_str := Findval(msg, "vector_clock", "retrieveVectorClock")
+	recVC_str := Findval(msg, "vector_clock")
 	recVC, err := utils.DeserializeVectorClock(recVC_str)
 	if err != nil {
 		stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock deserialization: " + err.Error()))
@@ -145,4 +141,12 @@ func RetrieveVectorClock(msg string, length_to_compare int) []int {
 		return nil
 	}
 	return recVC 
+}
+
+func Build_msg(args ...string) string {
+	if len(args) < 2 || len(args)%2 != 0 {
+		log.Fatal(Format_e("message.go", "Build_msg", "args must be even and at least 2"))
+	}
+	data := Build_msg_args(args...)
+	return Msg_format_multi(data)
 }

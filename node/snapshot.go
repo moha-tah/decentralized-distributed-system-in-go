@@ -48,11 +48,11 @@ var snap_bfmssage_keyvalsep = consts.Fieldsep
 // - If a normal message is received, check if it is buffered and update the buffered messages accordingly.
 // ⚠️ FIFO hypothesis.
 func (c *ControlLayer) handleSnapshotMsg(msg string) bool {
-	msg_type := format.Findval(msg, "type", c.GetName())
-	initiator := format.Findval(msg, "sender_name_source", c.GetName())
-	sender_name := format.Findval(msg, "sender_name", c.GetName())
+	msg_type := format.Findval(msg, "type")
+	initiator := format.Findval(msg, "sender_name_source")
+	sender_name := format.Findval(msg, "sender_name")
 
-	snapshot_id, snap_err := strconv.Atoi(format.Findval(msg, "snapshot_id", c.GetName()))
+	snapshot_id, snap_err := strconv.Atoi(format.Findval(msg, "snapshot_id"))
 	if snap_err != nil {
 		format.Display(format.Format_e(c.GetName(), "HandleMessage()", "Error parsing snapshot_id: "+snap_err.Error()))
 	}
@@ -106,7 +106,7 @@ func (c *ControlLayer) handleSnapshotMsg(msg string) bool {
 			}
 		}
 	} else if msg_type == "snapshot_response" {
-		state_str := format.Findval(msg, "content_value", c.GetName())
+		state_str := format.Findval(msg, "content_value")
 		state := DeserializeGlobalSnapshot(state_str)
 		c.mu.Lock() // Update the SubTreeState with the received state
 		subTreeState := c.subTreeState
@@ -325,12 +325,12 @@ func SerializeSnapshotData(sdata SnapshotData) string {
 // Reconstructs SnapshotData from serialized string. 
 // Parses fields and rebuilds buffered messages with proper formatting.
 func DeserializeSnapshotData(snap_field string) SnapshotData {
-	initiator := format.Findval(snap_field, "snap_initiator", "DSData")
-	vectorClock := format.Findval(snap_field, "snap_vclk", "DSData")
-	content := format.Findval(snap_field, "snap_content", "DSData")
-	nodeName := format.Findval(snap_field, "snap_node_name", "DSData")
+	initiator := format.Findval(snap_field, "snap_initiator")
+	vectorClock := format.Findval(snap_field, "snap_vclk")
+	content := format.Findval(snap_field, "snap_content")
+	nodeName := format.Findval(snap_field, "snap_node_name")
 	var bufferedMsgs []string 
-	bfMsgField := format.Findval(snap_field, "snap_buffered_msgs", "DSData")
+	bfMsgField := format.Findval(snap_field, "snap_buffered_msgs")
 	for _, bfm_msg := range strings.Split(bfMsgField, consts.Snap_bfmssage_fieldsep + consts.Snap_bfmssage_keyvalsep) {
 		current_msg := consts.Fieldsep + consts.Keyvalsep
 		keyval_parts := strings.Split(bfm_msg, consts.Snap_bfmssage_fieldsep)
@@ -384,9 +384,9 @@ func SerializeGlobalSnapshot(gdata GlobalSnapshot) string {
 // Reconstructs GlobalSnapshot from string. Extracts metadata, locates data section, 
 // and deserializes individual node snapshots.
 func DeserializeGlobalSnapshot(snap_field string) GlobalSnapshot {
-	initiator := format.Findval(snap_field, "snap_initiator", "DSData")
-	vectorClock := format.Findval(snap_field, "snap_vclk", "DSData")
-	snapshotId := format.Findval(snap_field, "snap_id", "DSData")
+	initiator := format.Findval(snap_field, "snap_initiator")
+	vectorClock := format.Findval(snap_field, "snap_vclk")
+	snapshotId := format.Findval(snap_field, "snap_id")
 	var data []SnapshotData
 
 	// The data field is from "snap_data#" to the next "{{":

@@ -178,17 +178,12 @@ func (s *SensorNode) Type() string { return s.nodeType }
 func (s *SensorNode) HandleMessage(channel chan string) {
 	for msg := range channel {
 		// 🔎 Identifier le type de message
-		// msgType := format.Findval(msg, "type", s.GetName())
-		// msgSender := format.Findval(msg, "sender_name_source", s.GetName())
-		
-		vcStr := format.Findval(msg, "vector_clock", s.GetName())
+		vcStr := format.Findval(msg, "vector_clock")
 		recvVC, err := utils.DeserializeVectorClock(vcStr)
 
 		// 🔁 Mettre à jour le vector clock à la réception
 		s.mu.Lock()
 		if s.vectorClockReady == true {
-			// vcStr := format.Findval(msg, "vector_clock", s.GetName())
-			// recvVC, err := utils.DeserializeVectorClock(vcStr)
 			if err == nil {
 				for i := 0; i < len(s.vectorClock); i++ {
 					s.vectorClock[i] = utils.Max(s.vectorClock[i], recvVC[i])
@@ -196,7 +191,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 				s.vectorClock[s.nodeIndex] += 1
 			}
 		}
-		recClk, _ := strconv.Atoi(format.Findval(msg, "clk", s.GetName()))
+		recClk, _ := strconv.Atoi(format.Findval(msg, "clk"))
 		s.clk = utils.Synchronise(s.clk, recClk)
 
 		s.mu.Unlock()
