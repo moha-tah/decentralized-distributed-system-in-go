@@ -279,6 +279,10 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 			c.processBlueTree(msg)
 		case "tree_red": // tree construction message (red messages from lecture)
 			c.processRedTree(msg)
+		case "new_node":
+			format.Display_d(c.GetName(), "HandleMsg()", "New node received: "+format.Findval(msg, "new_node"))
+			propagate_msg = false // Network layer handles propagation of this message
+			c.networkLayer.MessageFromControlLayer("Hello")
 		}
 
 	} else if msg_destination == "verifiers" {

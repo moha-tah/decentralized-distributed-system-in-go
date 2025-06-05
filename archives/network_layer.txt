@@ -1,3 +1,7 @@
+########### UNUSED CODE ###########
+#### More complete version, but to complex...
+
+
 package node
 
 import (
@@ -34,9 +38,11 @@ type NetworkLayer struct {
 
 	// Network-related fields
 	listenPort	string
-	peers      	[]string
-	activeCon  	[]net.Conn
+	peers      	[]string	// List of peers addresses (ie not we are connected to)
+	peersNames	[]string 	// List of peers names
+	activeCon  	map[string]net.Conn
 	waitingForAdmission bool 	// True if this node is waiting for an admission
+	preRequestDone	bool		// Did we obtained the name of the node we want to be connected to?
 	knownPeers 	[]string 	// List of known peers (for admission requests), INCLUDES this node
 	networkIsRing	bool 		// True if the network is a ring
 
@@ -44,7 +50,9 @@ type NetworkLayer struct {
 	expectedAnswers int 		// Number of expected answers for admission requests
 	electedLeader 	string 		// Name of the elected leader, if any
 	nodeRequestingElection string	// Name of the node requesting the election, if any 
-	waitingConn 	net.Conn	// Connection to the node that is waiting for admission
+	connRequestingElection string	// Connection to the node that is requesting the election (election level)
+	waitingConn 	net.Conn	// Connection to the node that is waiting for admission (node level)
+	waitingConnName	string 		// Name of the node that is waiting for admission (node level)
 }
 
 func NewNetworkLayer(id, nodeType string, appNode *Node, controlLayer *ControlLayer, listenPort string, peers_int []string) NetworkLayer {
@@ -77,9 +85,11 @@ func NewNetworkLayer(id, nodeType string, appNode *Node, controlLayer *ControlLa
 		peers:     peers,
 		knownPeers: []string{},
 		networkIsRing: false, // Default to false, will be set when joining the network
+		activeCon: make(map[string]net.Conn), // Active connections, key is the remote address
 
 		//⚠️ Hypothesis: By default, the node is waiting for admission
-		waitingForAdmission: true, // Set to true to wait for admission request
+		waitingForAdmission: true, 	// Set to true to wait for admission request
+		preRequestDone: false, 		// Set to false as pre-request is not done yet
 
 		electionParent: nil, // No parent by default
 		expectedAnswers: -1,
@@ -118,20 +128,6 @@ func (n* NetworkLayer) Start() {
 		go n.startClient(peer, &wg)
 	}
 
-	go func() {
-		// Start control layer once the network layer is ready 
-		for {
-			n.mu.Lock()
-			waitingForAdmission := n.waitingForAdmission
-			n.mu.Unlock()
-			if !waitingForAdmission {
-				break // Exit the loop if admission is granted
-			}
-			time.Sleep(1 * time.Second) // Wait until the admission is granted
-		}
-		format.Display_network(n.GetName(), "Start()", "Admission granted, starting control layer.")
-		n.controlLayer.Start(n) // Start the control layer
-	}()
 
 	wg.Wait()
 }
@@ -170,6 +166,7 @@ func (n* NetworkLayer) SendMessage(msg string, conn* net.Conn, toCtrlLayerArg ..
 	if len(toCtrlLayerArg) > 0 && toCtrlLayerArg[0] {
 		toCtrlLayer = true
 	}
+
 	// Add message default values
 	if format.Findval(msg, "propagation") == "" {
 		msg = format.AddFieldToMessage(msg, "propagation", "false")
@@ -201,7 +198,6 @@ func (n* NetworkLayer) SendMessage(msg string, conn* net.Conn, toCtrlLayerArg ..
 	// The sender can also be the app layer, so check for that:
 	var msg_sender string = format.Findval(msg, "sender_name_source")
 	n.AddNewMessageId(msg_sender, msg_NbMessageSent_str)
-
 
 	if toCtrlLayer {
 		n.controlLayer.HandleMessage(msg) // Pass the message to the control layer 
@@ -249,14 +245,25 @@ func (n* NetworkLayer) startClient(address string, wg *sync.WaitGroup) {
 
 	// Ask for admission while not admitted
 	for {
+		n.mu.Lock()
+		preRequestDone := n.preRequestDone
+		n.mu.Unlock()
+
 		msg := format.Build_msg(
 			"sender_name", n.GetName(),
-			"type", "admission_request",
 			"id", n.GenerateUniqueMessageID(),
-			"destination", "all",
+			"destination", "network",
 			"requester", n.GetName(),
-			"requested_connections", strings.Join(n.peers, utils.PearD_SITE_SEPARATOR),
+			"requesterAddress", conn.RemoteAddr().String(),
 			"vector_clock", strconv.Itoa(n.counter))
+
+		if preRequestDone {
+			msg = format.AddFieldToMessage(msg, "requested_connections", strings.Join(n.peers, utils.PearD_SITE_SEPARATOR))
+			msg = format.AddFieldToMessage(msg, "requested_connections_names", strings.Join(n.peersNames, utils.PearD_SITE_SEPARATOR))
+			msg = format.AddFieldToMessage(msg, "type", "admission_request")
+		} else {
+			msg = format.AddFieldToMessage(msg, "type", "prerequest_name")
+		}
 		if n.SendMessage(msg, &conn) == 1 {
 			format.Display_e(n.GetName(), "startClient()", "Error sending admission request in network.sendMessage()")
 			conn.Close()
@@ -264,7 +271,24 @@ func (n* NetworkLayer) startClient(address string, wg *sync.WaitGroup) {
 		format.Display_network(n.GetName(), "startClient()", "Waiting for admission to be granted...")
 		time.Sleep(1 * time.Second) // Wait before sending another admission request
 		if n.waitingForAdmission == false {
-			format.Display_network(n.GetName(), "startClient()", "Admission granted, starting activity.")
+			format.Display_network(n.GetName(), "startClient()", "Admission granted, stopping admission requests.")
+			
+			// Connect to the remaining peers we need to connect to
+			// n.mu.Lock()
+			// for _, peer := range n.peers {
+			// 	if !slices.Contains(n.activeCon, conn) {
+			// 		// If we are not already connected to this peer, we connect
+			// 		peerConn, err := net.Dial("tcp", peer)
+			// 		if err != nil {
+			// 			format.Display_e(n.GetName(), "startClient()", fmt.Sprintf("Could not connect to %s: %v", peer, err))
+			// 			continue
+			// 		}
+			// 		n.activeCon = append(n.activeCon, peerConn) // Add the connection to active connections
+			// 		go n.handleConnection(peerConn, true) // Handle the new connection
+			// 	}
+			// }
+			// n.mu.Unlock()
+
 			break // Exit the loop if admission is granted
 		}
 	}
@@ -274,11 +298,36 @@ func (n* NetworkLayer) handleConnection(conn net.Conn, isClient bool) {
 	defer conn.Close()
 	
 	n.mu.Lock()
-	n.waitingConn = conn
+	// properCon := ""
+	// if isClient {
+	// 	properCon = conn.RemoteAddr().String() // For client, we use the remote address
+	// } else {
+	// 	properCon = conn.LocalAddr().String() // For server, we use the local address
+	// }
+	// connKnown := false
+	// for _, c := range n.activeCon {
+		
+		
+	// connKnown := slices.Contains(n.activeCon, conn)
+	// if n.electedLeader != "" && 
+	// 	// If we already have an elected leader, we do not want to accept new connections
+	// 	// as an admission request is already in progress.
+	// 	n.mu.Unlock()
+	// 	return
+	// }
+
+	// if n.waitingConn == nil && !n.waitingForAdmission && !connKnown {
+	// 	n.waitingConn = conn
+	// } 
+
 	n.mu.Unlock()
 
 	remoteAddr := conn.RemoteAddr().String()
-	fmt.Println("[*] Connection from/to", remoteAddr)
+	if isClient {
+		format.Display_network(n.GetName(), "handleConnection()", fmt.Sprintf("Connection from/to %s", remoteAddr))
+	} else {
+		format.Display_network(n.GetName(), "handleConnection()", fmt.Sprintf("New connection from %s", conn.LocalAddr().String()))
+	}	
 
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
@@ -288,12 +337,45 @@ func (n* NetworkLayer) handleConnection(conn net.Conn, isClient bool) {
 			continue
 		}
 
+		n.mu.Lock()
+		waitingForAdmission := n.waitingForAdmission
+		electedLeader := n.electedLeader // Get the current elected leader, if any
+		n.mu.Unlock()
+		format.Display_network(n.GetName(), "handleConnection()", fmt.Sprintf("Waiting for admission: %t, Elected leader: %s", waitingForAdmission, electedLeader))
+
 		msg_destination := format.Findval(msg, "destination")
 		msg_destination_id, _ := utils.ExtractIDFromName(msg_destination)
 		msg_type := format.Findval(msg, "type")
+		msg_sender := format.Findval(msg, "sender_name")
+
+		// Check if the connection is already known 
+		connKnown := false
+		n.mu.Lock()
+		for c_name := range n.activeCon {
+			if c_name == msg_sender {
+				connKnown = true
+				break
+			}
+		}
+		n.mu.Unlock()
+
+		if !waitingForAdmission && !connKnown && msg_type =="admission_granted" { // I am in the ring, but don't know this conn.
+			n.activeCon[remoteAddr] = conn // Add the connection to active connections
+			format.Display_w(n.GetName(), "handleConnection()", fmt.Sprintf("New connection added to active connections: %s", remoteAddr))
+		}
+
 		
 		if msg_type == "admission_request" {
-			n.handleAdmissionRequest(msg, conn)
+			if !waitingForAdmission && n.electedLeader == "" {
+				// Only process the requests when we are in the network.
+				n.handleAdmissionRequest(msg, conn)
+			}
+		} else if msg_type == "prerequest_name" {
+			if !waitingForAdmission && electedLeader == "" {
+				n.handlePreRequestName(conn)
+			}
+		} else if msg_type == "prerequest_name_answer" {
+			n.handlePreRequestNameAnswer(msg)
 		} else if msg_type== "admission_granted" {
 			n.handleAdmissionGranted(msg, conn)
 		} else if msg_type == "admission_rejected" {
@@ -341,26 +423,61 @@ func (n* NetworkLayer) handleConnection(conn net.Conn, isClient bool) {
 
 	// Remove the connection from active connections
 	n.mu.Lock()
-	index := -1
+	index := ""
 	for i, c := range n.activeCon {
 		if c == conn {
 			index = i
 			break
 		}
 	}
-	if index != -1 {
-		n.activeCon = slices.Delete(n.activeCon, index, index+1)
+	if index != "" {
+		delete(n.activeCon, index) // Remove the connection from active connections
+		format.Display_network(n.GetName(), "handleConnection()", fmt.Sprintf("Connection %s removed from active connections", remoteAddr))
 	}
 	n.mu.Unlock()
 }
 
-// This function is called by the control layer to send a message to the network layer.
-// Nothing is done yet (only prints).
-func (n* NetworkLayer) MessageFromControlLayer(msg string) {
-	format.Display_network(n.GetName(), "MessageFromControlLayer()", "Received message from control layer: "+msg)
+// ============================= ADMISSION HANDLING FUNCTIONS ============================
+
+// handlePreRequestName processes a pre-request name message: if a node ask for prerequest
+// it means it wants to be connected to this node => we send back our name, to help the 
+// requester constitute a proper request for admission
+func (n* NetworkLayer) handlePreRequestName(conn net.Conn) {
+	msg_prequest_answer := format.Build_msg(
+		"sender_name", n.GetName(),
+		"type", "prerequest_name_answer",
+		"id", n.GenerateUniqueMessageID(),
+		"destination", "network")
+	n.SendMessage(msg_prequest_answer, &conn) 
 }
 
-// ============================= ADMISSION HANDLING FUNCTIONS ============================
+func (n* NetworkLayer) handlePreRequestNameAnswer(msg string) {
+	requestedNodeName := format.Findval(msg, "sender_name")
+	n.mu.Lock()
+	peersNames := n.peersNames
+	lengthPeersNames := len(peersNames)
+	n.mu.Unlock()
+	if !slices.Contains(peersNames, requestedNodeName) {
+		// If the requested node name is not already in the peers names, we add it
+		n.mu.Lock()
+		n.peersNames = append(n.peersNames, requestedNodeName)
+		lengthPeersNames = len(n.peersNames) // Update the length after adding
+		n.mu.Unlock()
+		format.Display_network(n.GetName(), "handlePreRequestNameAnswer()", "Pre-request name answer received from "+requestedNodeName)
+	} else {
+		format.Display_w(n.GetName(), "handlePreRequestNameAnswer()", "Pre-request name answer received from "+requestedNodeName+", but already known.")
+	}
+	if lengthPeersNames == len(n.peers) && !n.preRequestDone {
+		// If we have received all pre-request names, we can set the preRequestDone to true
+		n.mu.Lock()
+		n.preRequestDone = true
+		n.mu.Unlock()
+		format.Display_network(n.GetName(), "handlePreRequestNameAnswer()", "All pre-request names received, ready to send admission request.")
+	} else {
+		format.Display_network(n.GetName(), "handlePreRequestNameAnswer()", "Waiting for more pre-request names, current count: "+strconv.Itoa(lengthPeersNames))
+	}
+
+}
 
 // handleAdmissionRequest processes an admission request message
 // For now it only responds with a simple acknowledgment
@@ -377,7 +494,7 @@ func (n* NetworkLayer) handleAdmissionRequest(msg string, conn net.Conn) {
 	networkIsRing := n.networkIsRing // Check if the network is a ring
 	n.mu.Unlock()
 	if slices.Contains(knownPeers, requesterName) {
-		format.Display_w(n.GetName(), "handleAdmissionRequest()", "Admission request from "+requesterName+" already known, ignoring.")
+		format.Display_w(n.GetName(), "handleAdmissionRequest()", "Admission request from "+requesterName+" already known, ignoring. Known peers: " + strings.Join(knownPeers, ", "))
 		return // Ignore admission request if requester is already known (duplicate request)
 	} else {
 		format.Display_network(n.GetName(), "handleAdmissionRequest()", "Will process admission request from "+senderName)
@@ -385,13 +502,13 @@ func (n* NetworkLayer) handleAdmissionRequest(msg string, conn net.Conn) {
 
 
 	if (networkIsRing && len(requestedConnections) != 2) || (!networkIsRing && len(requestedConnections) != 1) {
-		format.Display_e(n.GetName(), "handleAdmissionRequest()", "Admission request from "+senderName+" with only one requested connection, ignoring. To continue the ring network, please connect to two nodes.")
-		msg_reject := format.Build_msg(
-			"sender_name", n.GetName(),
-			"type", "admission_rejected",
-			"id", n.GenerateUniqueMessageID(),
-			"destination", "network")
-		n.SendMessage(msg_reject, &conn) // Send rejection message back to the requester
+		format.Display_e(n.GetName(), "handleAdmissionRequest()", "Admission request from "+senderName+" with wrong number of connection, ignoring. Only ring networks are allowed.")
+		// msg_reject := format.Build_msg(
+		// 	"sender_name", n.GetName(),
+		// 	"type", "admission_rejected",
+		// 	"id", n.GenerateUniqueMessageID(),
+		// 	"destination", "network")
+		// n.SendMessage(msg_reject, &conn) // Send rejection message back to the requester
 		return
 	}
 			
@@ -402,7 +519,10 @@ func (n* NetworkLayer) handleAdmissionRequest(msg string, conn net.Conn) {
 		n.mu.Lock()
 		n.electedLeader = n.GetName() // Set this node as the leader
 		n.nodeRequestingElection = requesterName // Store the node requesting the election
+		n.connRequestingElection = conn.RemoteAddr().String() // Store the connection to the node requesting the election
 		n.electionParent = nil
+		n.waitingConn = conn
+		n.waitingConnName = requesterName // Store the name of the node that is waiting for admission
 		n.expectedAnswers = len(n.activeCon) // Reset expected answers to the number of neighbors (no minus one as the node requesting admission is not in activeCon)
 		activeCons := ""
 		for _, c := range n.activeCon {
@@ -413,14 +533,16 @@ func (n* NetworkLayer) handleAdmissionRequest(msg string, conn net.Conn) {
 		n.mu.Unlock()
 		// Start election process
 		if expectedAnswers > 0 {
-			format.Display_network(n.GetName(), "handleAdmissionRequest()", "No leader elected, trying to become the leader: "+n.electedLeader)
+			format.Display_network(n.GetName(), "handleAdmissionRequest()", "Start my wave, as leader: "+n.electedLeader)
 			msg_election := format.Build_msg(
 				"sender_name", n.GetName(),
 				"type", "admission_wave_down",
 				"id", n.GenerateUniqueMessageID(),
 				"destination", "network",
 				"requester", requesterName, // The node requesting admission
+				"requesterAddress", format.Findval(msg, "requesterAddress"), // The address of the requester
 				"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
+				"requested_connections_names", format.Findval(msg, "requested_connections_names"), // The requested connections names
 				"leader_name", n.GetName(), // Set the leader name to this node
 				)
 			for _, c := range n.activeCon {
@@ -434,14 +556,15 @@ func (n* NetworkLayer) handleAdmissionRequest(msg string, conn net.Conn) {
 			n.acceptAdmission(msg ,conn) // Accept the admission for the requester
 		}
 	} else {
-		format.Display_network(n.GetName(), "handleAdmissionRequest()", "Already have a leader: "+n.electedLeader)
 		n.mu.Lock()
 		if n.nodeRequestingElection == requesterName {
+			format.Display_network(n.GetName(), "handleAdmissionRequest()", "Already have a leader: "+n.electedLeader+ " for that new node, so putting the requester "+requesterName+" in waiting state.")
 			// I received an admission request but I already have a leader. This occurs
 			// when the new node is connected to multiple nodes at the same time. The new node 
 			// also asked for admission to the other nodes, which already propagated their leader to me.
 			// I need to remember that I am also connected to this new node :
 			n.waitingConn = conn // Store the connection for later use
+			n.waitingConnName = requesterName // Store the name of the node that is waiting for admission
 		}
 		n.mu.Unlock()
 	}
@@ -469,6 +592,16 @@ func (n* NetworkLayer) handleAdmissionWaveDown(msg string, conn net.Conn) {
 		expectedAnswers := n.expectedAnswers
 		n.mu.Unlock()
 		format.Display_network(n.GetName(), "handleAdmissionWaveDown()", "Elected new leader: "+newLeader)
+		// Show active cons:
+		s := ""
+		n.mu.Lock()
+		activeCons := n.activeCon
+		for c_name := range activeCons {
+			s += c_name
+		}
+		n.mu.Unlock()
+
+		format.Display_network(n.GetName(), "handleAdmissionWaveDown()", "Active connections: " + s + " (expected answers: " + strconv.Itoa(expectedAnswers) + ")")
 
 		if expectedAnswers > 0 {
 			// Send admission wave down to all neighbors (except the sender)
@@ -479,6 +612,7 @@ func (n* NetworkLayer) handleAdmissionWaveDown(msg string, conn net.Conn) {
 			for _, c := range activeCons {
 				if c != conn { // Do not send back to where the msg is coming from
 					msg_wave_down := format.Replaceval(msg, "sender_name", n.GetName())
+					msg_wave_down = format.Replaceval(msg_wave_down, "id", n.GenerateUniqueMessageID())
 					n.SendMessage(msg_wave_down, &c)
 				}
 			}
@@ -491,7 +625,9 @@ func (n* NetworkLayer) handleAdmissionWaveDown(msg string, conn net.Conn) {
 				"id", n.GenerateUniqueMessageID(),
 				"destination", "network",
 				"requester", requesterName, // The node requesting admission
+				"requesterAddress", format.Findval(msg, "requesterAddress"), // The address of the requester
 				"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
+				"requested_connections_names", format.Findval(msg, "requested_connections_names"), // The requested connections names
 				"leader_name", newLeader, // Set the leader name to the new leader
 				)
 			n.SendMessage(msg_wave_up, &conn)
@@ -500,9 +636,11 @@ func (n* NetworkLayer) handleAdmissionWaveDown(msg string, conn net.Conn) {
 
 	} else {
 		format.Display_network(n.GetName(), "handleAdmissionWaveDown()", "Current leader remains: "+n.electedLeader)
-		if n.electedLeader == newLeader {
+		if n.electedLeader == leaderName {
 			msg_wave_up := format.Replaceval(msg, "sender_name", n.GetName())
 			msg_wave_up = format.Replaceval(msg_wave_up, "type", "admission_wave_up")
+			msg_wave_up = format.Replaceval(msg_wave_up, "id", n.GenerateUniqueMessageID())
+			msg_wave_up = format.Replaceval(msg_wave_up, "leader_name", n.electedLeader)
 			n.SendMessage(msg_wave_up, &conn)
 		}
 	}
@@ -531,7 +669,9 @@ func (n* NetworkLayer) handleAdmissionWaveUp(msg string, conn net.Conn) {
 					"id", n.GenerateUniqueMessageID(),
 					"destination", "network",
 					"requester", format.Findval(msg, "requester"), // The node requesting admission
+					"requesterAddress", format.Findval(msg, "requesterAddress"), // The address of the requester
 					"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
+					"requested_connections_names", format.Findval(msg, "requested_connections_names"), // The requested connections names
 					"leader_name", n.electedLeader, // Set the leader name to the current elected leader
 					)
 				n.SendMessage(msg_wave_up, &n.electionParent)
@@ -566,7 +706,9 @@ func (n* NetworkLayer) acceptAdmission(msg string, conn net.Conn) {
 		"destination", "network",
 		"propagation", "true",
 		"requester", requester, // The node requesting admission
+		"requesterAddress", format.Findval(msg, "requesterAddress"), // The address of the requester
 		"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
+		"requested_connections_names", format.Findval(msg, "requested_connections_names"), // The requested connections names
 		"known_peers", msg_content, // List of known peers
 		)
 
@@ -585,42 +727,75 @@ func (n* NetworkLayer) acceptAdmission(msg string, conn net.Conn) {
 // 1. For the requesting node, it means it has been admitted and can start its activity.
 // 2. For the node connected to the requesting node, it means it can now accept the new node
 func (n* NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
+	requester := format.Findval(msg, "requester")
+	senderName := format.Findval(msg, "sender_name")
 
 	n.mu.Lock()
 	waitingConn := n.waitingConn
+	waitingConnName := n.waitingConnName // The name of the node that is waiting for admission
 	waitingForAdmission := n.waitingForAdmission
 	requestedConnections := format.Findval(msg, "requested_connections")
 	activeCon := n.activeCon // Get the current active connections
+	knownConnSender := false
+	knownConnRequester := false
+	for c_name := range n.activeCon {
+		if c_name == senderName {
+			knownConnSender = true // The sender is already known
+		} else if c_name == requester {
+			knownConnRequester = true // The requester is already known
+		}
+	}
 	n.mu.Unlock()
 
 	// Notify our control layer that a new node exists
 	notify_ctrl := true // only false for the new node requesting admission
+	
 
-	if waitingForAdmission {
+	
+	if waitingForAdmission { //✅ We got accepted in the network! So we can start our activity
 		n.mu.Lock()
-		n.waitingForAdmission = false 		// Admitted!
 		n.waitingConn = nil 			// Reset waiting connection after admission granted
-		n.activeCon = append(n.activeCon, conn) // Add the new connection to active connections
+
+		if !knownConnSender {
+			n.activeCon[senderName] = conn // Add the new connection to active connections
+		}
+		
+		canStartControl := false
+		if len(n.activeCon) == len(n.peers) {
+			n.waitingForAdmission = false 		// Admitted by all!
+			canStartControl = true // We can start the control layer
+		}
+
 		format.Display_network(n.GetName(), "handleAdmissionGranted()", "Admission granted! I am now connected to: " + conn.RemoteAddr().String())
 
 		// Update list of known peers 
-		var names_in_message string = format.Findval(msg, "known_peers")
-		sites_parts := strings.Split(names_in_message, utils.PearD_SITE_SEPARATOR)
-		n.knownPeers = []string{} // Reset known peers
-		for _, site := range sites_parts {
-			n.knownPeers = append(n.knownPeers, site)
+		if len(n.knownPeers) == 1 {
+			var names_in_message string = format.Findval(msg, "known_peers")
+			sites_parts := strings.Split(names_in_message, utils.PearD_SITE_SEPARATOR)
+			n.knownPeers = []string{} // Reset known peers
+			for _, site := range sites_parts {
+				n.knownPeers = append(n.knownPeers, site)
+			}
 		}
 		n.mu.Unlock()
+		if canStartControl {
+			go n.controlLayer.Start(n) // Start the control layer
+		}
 		notify_ctrl = false
+
 	} else if waitingConn != nil { // I am one of the node the new node is connected to
 
 		// Send admission granted to the waiting new node
 		if format.Findval(msg, "requester") == n.nodeRequestingElection {
 			granted_msg := format.Replaceval(msg, "sender_name", n.GetName())
+			granted_msg = format.Replaceval(granted_msg, "id", n.GenerateUniqueMessageID())
+			granted_msg = format.Replaceval(granted_msg, "propagation", "false")
 			n.SendMessage(granted_msg, &waitingConn)
 			format.Display_network(n.GetName(), "handleAdmissionGranted()", "Sent admission granted to waiting connection: " + waitingConn.LocalAddr().String())
 			n.mu.Lock()
-			n.activeCon = append(n.activeCon, waitingConn) // Add the new connection to active connections
+			if !knownConnRequester {
+				n.activeCon[waitingConnName] = waitingConn // Add the waiting connection to active connections
+			}
 			n.waitingConn = nil // Reset waiting connection after sending the admission granted message
 			n.mu.Unlock()
 		} else {
@@ -629,18 +804,21 @@ func (n* NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
 
 		// I sended the admission granted message to the waiting connection,
 		// so now I need to ask the peer I am connected to and to which the new node is connected to,
-		// close our connection. This will thus maintain the ring network.
-		msg_close := format.Build_msg(
-			"sender_name", n.GetName(),
-			"type", "close_connection",
-			"id", n.GenerateUniqueMessageID(),
-			"destination", "network")
-		for _, c := range activeCon {
-			trimmedAddr := strings.TrimPrefix(c.LocalAddr().String(), "127.0.0.1:")
-			if strings.Contains(requestedConnections, trimmedAddr) {
-				n.SendMessage(msg_close, &c) // Send close connection message to the peer I am connected to
-			} else {
-				format.Display_network(n.GetName(), "handleAdmissionGranted()", "Not sending close connection message to "+trimmedAddr+" as it is not in the requested connections: "+requestedConnections)
+		// to close our connection. This will thus maintain the ring network.
+		// Close message only if we are > 3 in the network (new node included)
+		if len(activeCon) > 3 {
+			msg_close := format.Build_msg(
+				"sender_name", n.GetName(),
+				"type", "close_connection",
+				"id", n.GenerateUniqueMessageID(),
+				"destination", "network")
+			for _, c := range activeCon {
+				trimmedAddr := strings.TrimPrefix(c.LocalAddr().String(), "127.0.0.1:")
+				if strings.Contains(requestedConnections, trimmedAddr) {
+					n.SendMessage(msg_close, &c) // Send close connection message to the peer I am connected to
+				} else {
+					format.Display_network(n.GetName(), "handleAdmissionGranted()", "Not sending close connection message to "+trimmedAddr+" as it is not in the requested connections: "+requestedConnections)
+				}
 			}
 		}
 
@@ -648,10 +826,17 @@ func (n* NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
 		n.mu.Lock()
 		n.knownPeers = append(n.knownPeers, format.Findval(msg, "requester")) // Add the requester to known peers
 		n.mu.Unlock()
-
-		// Send message to control layer
 	} else {
 		format.Display_network(n.GetName(), "handleAdmissionGranted()", "Reset election parameters as no waiting connection found.")
+
+		// If I am one of the node the ne:w node is connected to, I need to connect to it.
+		// requestedConnectionsNames := format.Findval(msg, "requested_connections_names")
+		// if requestedConnectionsNames != "" && strings.Contains(requestedConnectionsNames, n.GetName()) {
+		// 	requesterAddress := format.Findval(msg, "requesterAddress")
+		// 	go 
+		// }
+
+
 		n.knownPeers = append(n.knownPeers, format.Findval(msg, "requester")) // Add the requester to known peers
 	}
 
@@ -664,6 +849,7 @@ func (n* NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
 
 	format.Display_network(n.GetName(), "handleAdmissionGranted()", "Known peers: " + strings.Join(n.knownPeers, ", "))
 	n.mu.Unlock()
+
 	if notify_ctrl {
 		notif_msg := format.Build_msg(
 			"sender_name", n.GetName(),

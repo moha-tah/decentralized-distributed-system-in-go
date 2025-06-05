@@ -54,7 +54,7 @@ func (c *ControlLayer) handleSnapshotMsg(msg string) bool {
 
 	snapshot_id, snap_err := strconv.Atoi(format.Findval(msg, "snapshot_id"))
 	if snap_err != nil {
-		format.Display(format.Format_e(c.GetName(), "HandleMessage()", "Error parsing snapshot_id: "+snap_err.Error()))
+		return true // If snapshot_id is not present or invalid, we assume it is a normal message
 	}
 
 	// Useful variable for later: Do we already have a snapshot for this id?
