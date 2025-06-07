@@ -31,6 +31,16 @@ func AddFieldToMessage(msg string, key string, val string) string {
 	// return sep + strings.Join(tab_allkeyvals, sep)
 }
 
+func AddOrReplaceFieldToMessage(msg string, key string, val string) string {
+	if strings.Contains(msg, keyvalsep+key+keyvalsep) {
+		// Key already exists, replace its value
+		return Replaceval(msg, key, val)
+	} else {
+		// Key does not exist, add it
+		return AddFieldToMessage(msg, key, val)
+	}
+}
+
 func Replaceval(msg string, key string, new_val string) string {
 	if len(msg) < 2 {
 		stderr.Print(Format_w("message.go", "Replaceval", "message trop court : "+msg))
@@ -94,15 +104,15 @@ func Build_msg_args(args ...string) map[string]string {
 	// Check mandatory keys: at least sender_name and clk need
 	// to be present in the message = they have to be
 	// given as input to Build_msg_args
-	var mandatory_keys = []string{"sender_name", "destination", "id"}
-	for _, key := range mandatory_keys {
-		if _, ok := data[key]; !ok {
-			log.Fatal(Format_e(
-				"message.go",
-				"Build_msg_args",
-				"missing_mandatory_key: " + key))
-		}
-	}
+	// var mandatory_keys = []string{"sender_name", "destination", "id"}
+	// for _, key := range mandatory_keys {
+	// 	if _, ok := data[key]; !ok {
+	// 		log.Fatal(Format_e(
+	// 			"message.go",
+	// 			"Build_msg_args",
+	// 			"missing_mandatory_key: " + key))
+	// 	}
+	// }
 	return data
 }
 

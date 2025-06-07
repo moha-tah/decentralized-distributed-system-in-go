@@ -4,17 +4,20 @@ declare -a PIDS=()
 
 ./main verifier 1 &
 PIDS+=($!)
-sleep 1
 
 ./main user_exp 2 1 &
 PIDS+=($!)
-sleep 1
 
 ./main user_linear 3 1 2 & 
 PIDS+=($!)
-sleep 1
 
 ./main sensor 4 3 1 & 
+PIDS+=($!)
+
+./main verifier 5 1 4  &
+PIDS+=($!)
+
+./main sensor 6 3 2 &
 PIDS+=($!)
 
 # --- Function to clean up all child processes on script exit or Ctrl-C ---

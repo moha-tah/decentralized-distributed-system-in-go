@@ -143,8 +143,8 @@ func (c *ControlLayer) SendPearDiscoveryAnswer(msg string) {
 		"", c.GetName())
 
 	// Then propagate the pear_discovery
-	var propagated_msg string = format.Replaceval(msg, "sender_name", c.GetName())
-	c.SendMsg(propagated_msg)
+	// var propagated_msg string = format.Replaceval(msg, "sender_name", c.GetName())
+	// c.SendMsg(propagated_msg)
 	c.sentDiscoveryMessage = true // Do not send it another time
 }
 

@@ -40,8 +40,8 @@ func main() {
 			seen[item] = true
 		}
 	}
-
-	listenPort := strconv.Itoa(9000 + node_id_int) // port calculation based on node_id
+	//
+	// listenPort := strconv.Itoa(node_id_int) // port calculation based on node_id
 
 	var child_node node.Node = nil
 
@@ -70,9 +70,10 @@ func main() {
 	}
 
 	control_layer := node.NewControlLayer(node_id+"_control", child_node)
-	network_layer := node.NewNetworkLayer(node_id, node_type, &child_node, control_layer, listenPort, peers)
+	network_layer := node.NewNetworkLayer(node_id, node_type, &child_node, control_layer,peers)
 
 	network_layer.Start() // Start the network layer
+	control_layer.Start() // Start the control layer
 
 	// Block forever or until signal
 	select {} // empty select blocks forever

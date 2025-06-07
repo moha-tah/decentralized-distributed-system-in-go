@@ -115,7 +115,9 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs ...bool) {
 		}
 	} else {
 		// format.Msg_send(msg, c.GetName())
-		c.networkLayer.SendMessage(msg, nil)
+		// c.networkLayer.SendMessage(msg, -1)
+		msg = format.AddFieldToMessage(msg, "sender_id", c.id)
+		c.SendMsgToNetwork(msg)
 	}
 
 	c.mu.Lock()
@@ -124,6 +126,21 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs ...bool) {
 
 }
 
+
+func (c *ControlLayer) SendMsgToNetwork(msg string) {
+	c.mu.Lock()
+	networkLayer := c.networkLayer 
+
+	msg = format.AddOrReplaceFieldToMessage(msg, "id", c.GenerateUniqueMessageID())
+	c.mu.Unlock()
+
+	networkLayer.MessageFromControlLayer(msg)
+
+	c.mu.Lock()
+	c.nbMsgSent = c.nbMsgSent + 1
+	c.mu.Unlock()
+
+}
 
 // Return true if the message's ID is contained with
 // one of the controler's ID pairs. If it is not contains,
