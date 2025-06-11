@@ -30,7 +30,6 @@ func (c *ControlLayer) SendTreeConstruction() {
 	c.SendControlMsg(c.GetName(), "siteName", "tree_blue", "control", "", c.GetName())
 }
 
-
 // Tree construction logic (blue messages from lecture)
 func (c *ControlLayer) processBlueTree(msg string) {
 	sender_name_source := format.Findval(msg, "sender_name_source")
@@ -79,7 +78,7 @@ func (c *ControlLayer) processBlueTree(msg string) {
 	}
 }
 
-func (c* ControlLayer) processRedTree(msg string) {
+func (c *ControlLayer) processRedTree(msg string) {
 	sender_name_source := format.Findval(msg, "sender_name_source")
 	is_my_child_str := format.Findval(msg, "child")
 	is_my_child, err := strconv.ParseBool(is_my_child_str)
@@ -117,7 +116,6 @@ func (c* ControlLayer) processRedTree(msg string) {
 	}
 }
 
-
 func (c *ControlLayer) SendPearDiscoveryAnswer(msg string) {
 	// Send response (current node's name) to the control layer responsible
 	// of pear discovery. This message will be sent only once thanks
@@ -147,7 +145,6 @@ func (c *ControlLayer) SendPearDiscoveryAnswer(msg string) {
 	// c.SendMsg(propagated_msg)
 	c.sentDiscoveryMessage = true // Do not send it another time
 }
-
 
 // When closing, node 0 will send the names it acquired during
 // pear discovery, so that all nodes can know which nodes are
@@ -183,7 +180,7 @@ func (c *ControlLayer) ClosePearDiscovery() {
 	c.child.InitVectorClockWithSites(knownSiteNames)
 }
 
-func (c* ControlLayer) HandlePearDiscoverySealing(msg string) {
+func (c *ControlLayer) HandlePearDiscoverySealing(msg string) {
 
 	var names_in_message string = format.Findval(msg, "content_value")
 
@@ -192,9 +189,7 @@ func (c* ControlLayer) HandlePearDiscoverySealing(msg string) {
 	sites_parts := strings.Split(sites_verifiers_parts[0], utils.PearD_SITE_SEPARATOR)
 
 	c.mu.Lock()
-	for _, site := range sites_parts {
-		c.knownSiteNames = append(c.knownSiteNames, site)
-	}
+	c.knownSiteNames = append(c.knownSiteNames, sites_parts...)
 	if len(sites_verifiers_parts) >= 1 {
 		verifiers_parts := sites_verifiers_parts[1]
 		verifiers := strings.Split(verifiers_parts, utils.PearD_SITE_SEPARATOR)
@@ -234,7 +229,7 @@ func (c* ControlLayer) HandlePearDiscoverySealing(msg string) {
 	format.Display(format.Format_g(c.GetName(), "HandleMsg()", "Updated nb sites to "+strconv.Itoa(c.nbOfKnownSites)))
 }
 
-func (c* ControlLayer) HandlePearDiscoveryAnswerFromResponsibleNode(msg string) {
+func (c *ControlLayer) HandlePearDiscoveryAnswerFromResponsibleNode(msg string) {
 	// Only the node responsible for the pear discovery will read these
 	// lines, as direct messaging only target this node in pear discovery process.
 	var newSiteName string = format.Findval(msg, "content_value")

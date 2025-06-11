@@ -34,36 +34,30 @@ type Node interface {
 	GetLocalState() string
 }
 
-type Cut struct {
-	id	string
-	cut_vc	[]int // Cut's vector clock
-	states	map[string]string // states of the nodes in the cut
-}
-
 // BaseNode implements common functionality for all node types
 type BaseNode struct {
-	id        	string
-	mu		sync.Mutex
-	nodeType  	string
-	isRunning 	bool
-	ctrlLayer 	*ControlLayer
-	nbMsgSent	int
-	clk		int // Temporary variable for the vector clock
-	vectorClock []int // taille = nombre total de noeuds
-	vectorClockReady bool // true après pear_discovery_sealing
-	nodeIndex   int   // position de ce node dans le vecteur
+	id               string
+	mu               sync.Mutex
+	nodeType         string
+	isRunning        bool
+	ctrlLayer        *ControlLayer
+	nbMsgSent        int
+	clk              int   // Temporary variable for the vector clock
+	vectorClock      []int // taille = nombre total de noeuds
+	vectorClockReady bool  // true après pear_discovery_sealing
+	nodeIndex        int   // position de ce node dans le vecteur
 }
 
 // NewBaseNode creates a new base node with the given ID and type
 func NewBaseNode(id, nodeType string) BaseNode {
 	return BaseNode{
-		id:        id,
-		mu:        sync.Mutex{},
-		nodeType:  nodeType,
-		isRunning: false,
-		nbMsgSent: 0,
-		clk: 0,
-		nodeIndex: 0,
+		id:               id,
+		mu:               sync.Mutex{},
+		nodeType:         nodeType,
+		isRunning:        false,
+		nbMsgSent:        0,
+		clk:              0,
+		nodeIndex:        0,
 		vectorClockReady: false,
 	}
 }

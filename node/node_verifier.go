@@ -1,15 +1,15 @@
 package node
 
 import (
-	"strconv"
-	"time"
-	"os"
 	"distributed_system/format"
-	"distributed_system/utils"
 	"distributed_system/models"
+	"distributed_system/utils"
 	"fmt"
-	"strings"
+	"os"
 	"slices" // for `slices.Contains` function
+	"strconv"
+	"strings"
+	"time"
 )
 
 // VerifierNode represents a verifier in the system
@@ -17,23 +17,23 @@ type VerifierNode struct {
 	BaseNode
 	processingCapacity int
 	threshold          float32
-	verificationLocks  map[string]bool            // Maps item IDs to lock status
-	lockRequests       map[string]map[string]int// Maps item IDs to node IDs and timestamps
-	lockedItems        map[string]string          // Maps item IDs to noded locking each one
-	lockReplies        map[string]map[string]bool // Maps item IDs to node IDs and reply status
-	otherVerifiers     map[string]bool            // Set of other verifier node IDs
-	nbOfVerifiers      int			      // Number of OTHER verifiers in the network
-	recentReadings     map[string][]models.Reading// FIFO queue per sender
-	processingItems    map[string]bool            // Items currently being processed by this verifier
-	pendingItems       []models.Reading           // Queue of items waiting to be processed
-	verifiedItemIDs    map[string][]string        // Tracks the verified item for each sender by their ID
-	baseTemp     []float32 			      // Base temperature [low, high]
+	verificationLocks  map[string]bool             // Maps item IDs to lock status
+	lockRequests       map[string]map[string]int   // Maps item IDs to node IDs and timestamps
+	lockedItems        map[string]string           // Maps item IDs to noded locking each one
+	lockReplies        map[string]map[string]bool  // Maps item IDs to node IDs and reply status
+	otherVerifiers     map[string]bool             // Set of other verifier node IDs
+	nbOfVerifiers      int                         // Number of OTHER verifiers in the network
+	recentReadings     map[string][]models.Reading // FIFO queue per sender
+	processingItems    map[string]bool             // Items currently being processed by this verifier
+	pendingItems       []models.Reading            // Queue of items waiting to be processed
+	verifiedItemIDs    map[string][]string         // Tracks the verified item for each sender by their ID
+	baseTemp           []float32                   // Base temperature [low, high]
 }
 
 // NewVerifierNode creates a new verifier node
 func NewVerifierNode(id string, capacity int, threshold float32, baseTempLow float32, baseTempHigh float32) *VerifierNode {
 	return &VerifierNode{
-		BaseNode: NewBaseNode(id, "verifier"),
+		BaseNode:           NewBaseNode(id, "verifier"),
 		processingCapacity: capacity,
 		threshold:          threshold,
 		verificationLocks:  make(map[string]bool),
@@ -46,7 +46,7 @@ func NewVerifierNode(id string, capacity int, threshold float32, baseTempLow flo
 		processingItems:    make(map[string]bool),
 		pendingItems:       make([]models.Reading, 0),
 		verifiedItemIDs:    make(map[string][]string),
-		baseTemp:     	    []float32{baseTempLow, baseTempHigh},
+		baseTemp:           []float32{baseTempLow, baseTempHigh},
 	}
 }
 
@@ -55,25 +55,25 @@ func (v *VerifierNode) Start() error {
 	format.Display(format.Format_d("Start()", "node_verifier.go", "Starting verifier node "+v.GetName()))
 
 	v.isRunning = true
-	
+
 	// Start a goroutine to periodically check for unverified items
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
-				
+
 		v.mu.Lock()
-		isRunning := v.isRunning 
+		isRunning := v.isRunning
 		processingCapacity := v.processingCapacity
 		v.mu.Unlock()
-		
+
 		for isRunning {
 			select {
 			case <-ticker.C:
 				v.mu.Lock()
-				isRunning = v.isRunning 
+				isRunning = v.isRunning
 				l_processing := len(v.processingItems)
 				v.mu.Unlock()
 
-				// Only check for unverified items if we're not already processing 
+				// Only check for unverified items if we're not already processing
 				// more than the processing capacity.
 				if l_processing < processingCapacity { // Search for new only if not full already
 					go v.CheckUnverifiedItems()
@@ -86,6 +86,8 @@ func (v *VerifierNode) Start() error {
 					// }
 					// format.Display(format.Format_d(v.GetName(), "Start()", "Already processing "+ processingItemID))
 				}
+			default:
+				continue
 			}
 		}
 		ticker.Stop()
@@ -104,13 +106,13 @@ func (v *VerifierNode) InitVectorClockWithSites(sites []string) {
 
 // HandleMessage processes incoming messages from control app
 func (v *VerifierNode) HandleMessage(channel chan string) {
-	    defer func() {
+	defer func() {
 		if r := recover(); r != nil {
 			format.Display(format.Format_w(v.GetName(), "HandleMessage()", "Recovered from panic: "+fmt.Sprint(r)))
-		    // Optionally restart the message handling
-		    go v.HandleMessage(channel)
+			// Optionally restart the message handling
+			go v.HandleMessage(channel)
 		}
-	    }()
+	}()
 
 	for msg := range channel {
 		v.mu.Lock()
@@ -119,8 +121,8 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 		v.clk = utils.Synchronise(v.clk, rec_clk)
 		clk_int := v.clk
 		// if v.vectorClockReady == true {
-			recVC := format.RetrieveVectorClock(msg, len(v.vectorClock))
-			v.vectorClock = utils.SynchroniseVectorClock(v.vectorClock, recVC, v.nodeIndex)
+		recVC := format.RetrieveVectorClock(msg, len(v.vectorClock))
+		v.vectorClock = utils.SynchroniseVectorClock(v.vectorClock, recVC, v.nodeIndex)
 		// }
 		v.mu.Unlock()
 
@@ -135,7 +137,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			// Parse the reading value
 			readingVal, err := strconv.ParseFloat(msg_content_value, 32)
 			if err != nil {
-				format.Display(format.Format_e(v.GetName(), "HandleMessage","Error parsing reading value: "+msg_content_value))
+				format.Display(format.Format_e(v.GetName(), "HandleMessage", "Error parsing reading value: "+msg_content_value))
 				continue // Skip this message if parsing fails
 			}
 
@@ -151,20 +153,20 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 
 			// Add to FIFO queue for this sender
 			if len(queue) >= utils.VALUES_TO_STORE {
-				
+
 				v.removeAllExistenceOfReading(queue[0].ReadingID)
-			
+
 				// Remove the oldest element (slice trick)
 				queue = queue[1:]
 			}
 			queue = append(queue, models.Reading{
-				ReadingID: format.Findval(msg, "item_id"),
+				ReadingID:   format.Findval(msg, "item_id"),
 				Temperature: float32(readingVal),
-				Clock:      clk_int,
+				Clock:       clk_int,
 				SensorID:    msg_sender,
 				IsVerified:  false,
 			})
-			
+
 			v.recentReadings[msg_sender] = queue // Update the map
 
 			// Définir le code d'état
@@ -180,8 +182,6 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			// Sauvegarde dans le fichier log
 			v.logReceivedReading(msg_sender, readingVal, stateCode)
 
-
-		
 		case "snapshot_request":
 			format.Display(format.Format_d(
 				v.GetName(), "HandleMessage()",
@@ -219,31 +219,31 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 				// v.ctrlLayer.HandleMessage(response)
 				v.SendMessage(response, true)
 			}
-			
+
 		case "lock_request":
 			go v.handleLockRequest(msg)
-			
+
 		case "lock_reply":
 			go v.handleLockReply(msg)
-			
+
 		case "lock_release_and_verified_value":
 			go v.handleLockRelease(msg)
-	
+
 		case "lock_acquired":
 			go v.handleLockAcquired(msg)
 
 		case "lock_request_cancelled":
-			// Remove the lock request for this item 
-			itemID := format.Findval(msg, "item_id") 
-			v.mu.Lock() 
-			// Remove the lock request from our map 
-			delete(v.lockRequests, itemID) 
-			// Remove the lock replies for this item 
-			delete(v.lockReplies, itemID) 
+			// Remove the lock request for this item
+			itemID := format.Findval(msg, "item_id")
+			v.mu.Lock()
+			// Remove the lock request from our map
+			delete(v.lockRequests, itemID)
+			// Remove the lock replies for this item
+			delete(v.lockReplies, itemID)
 			v.mu.Unlock()
 
 		case "pear_discovery_verifier":
-			// This message is recieved from our control layer and 
+			// This message is recieved from our control layer and
 			// contains the list of verifiers in the network.
 			site_names := strings.Split(msg_content_value, utils.PearD_SITE_SEPARATOR)
 			// Add each verifier to our list of known verifiers :
@@ -273,20 +273,20 @@ func (v *VerifierNode) removeAllExistenceOfReading(readingID string) {
 	for senderID, itemIDs := range v.verifiedItemIDs {
 		v.verifiedItemIDs[senderID] = utils.RemoveAllOccurrencesString(itemIDs, readingID)
 	}
-	// Remove the readingID from the pending items 
+	// Remove the readingID from the pending items
 	for i, item := range v.pendingItems {
 		if item.ReadingID == readingID {
 			v.pendingItems = slices.Delete(v.pendingItems, i, i+1)
 			break
 		}
 	}
-	// Remove the readingID from the processing items 
+	// Remove the readingID from the processing items
 	delete(v.processingItems, readingID)
 }
 
 // SendMessage sends a message to the control layer.
 // Here is done the logic needed before and after sending the message
-func (v *VerifierNode) SendMessage(msg string, toHandleMessageArgs...bool) {
+func (v *VerifierNode) SendMessage(msg string, toHandleMessageArgs ...bool) {
 	toHandleMessage := false
 	if len(toHandleMessageArgs) > 0 {
 		toHandleMessage = toHandleMessageArgs[0]
@@ -302,7 +302,6 @@ func (v *VerifierNode) SendMessage(msg string, toHandleMessageArgs...bool) {
 	}
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(v_clk))
 	msg = format.Replaceval(msg, "id", v.GenerateUniqueMessageID())
-
 
 	if toHandleMessage {
 		v.ctrlLayer.HandleMessage(msg)
@@ -326,16 +325,16 @@ func (v *VerifierNode) CheckUnverifiedItems() {
 	v.mu.Lock()
 	l_pending := len(v.pendingItems)
 	v.mu.Unlock()
-	
+
 	// No items to process
 	if l_pending == 0 {
 		return
 	}
-	
+
 	// Get the next unverified item
 	pendingItem := v.chooseReadingToVerify() // The item we want to process
 	v.mu.Lock()
-	itemID := pendingItem.ReadingID  // Its ID
+	itemID := pendingItem.ReadingID                        // Its ID
 	var is_processingItem bool = v.processingItems[itemID] // Are we already processing it?
 	v.mu.Unlock()
 
@@ -343,12 +342,12 @@ func (v *VerifierNode) CheckUnverifiedItems() {
 	if is_processingItem {
 		return
 	}
-	
+
 	// Mark that we're about to start processing this item
 	v.mu.Lock()
 	v.processingItems[itemID] = true
 	v.mu.Unlock()
-	
+
 	// Try to acquire a distributed lock for this item
 	go v.requestLock(pendingItem)
 }
@@ -378,18 +377,18 @@ func (v *VerifierNode) findUnverifiedReadings() {
 		if !exists {
 			// Never verified anything from this sender
 			v.verifiedItemIDs[senderID] = make([]string, 0)
-		} 
-		
+		}
+
 		// Check if there are new readings to verify
-		// meaning they are in sender's queue but not in the verified indices 
+		// meaning they are in sender's queue but not in the verified indices
 		for _, reading := range readingsForThisSender {
-			// Check if this reading is already verified 
+			// Check if this reading is already verified
 			if !slices.Contains(verifiedItemIDsForThisSender, reading.ReadingID) {
-				 _, isProcessing := v.processingItems[reading.ReadingID]// Check if we are already processing this item 
-				 _, isLocked := v.lockedItems[reading.ReadingID] 	// Check if already locked 
-				 _, hasGrantedLock := v.lockRequests[reading.ReadingID] // Check if already locked 
-				if !isProcessing && !isLocked && !hasGrantedLock{
-					v.pendingItems = append(v.pendingItems, reading) // Add to pending item 
+				_, isProcessing := v.processingItems[reading.ReadingID] // Check if we are already processing this item
+				_, isLocked := v.lockedItems[reading.ReadingID]         // Check if already locked
+				_, hasGrantedLock := v.lockRequests[reading.ReadingID]  // Check if already locked
+				if !isProcessing && !isLocked && !hasGrantedLock {
+					v.pendingItems = append(v.pendingItems, reading) // Add to pending item
 				}
 			}
 		}
@@ -426,7 +425,7 @@ func (v *VerifierNode) requestLock(reading models.Reading) {
 	our_VC := utils.SerializeVectorClock(v.vectorClock)
 
 	v.mu.Unlock()
-	
+
 	// Broadcast lock request to all other verifiers
 	msg_id := v.GenerateUniqueMessageID()
 	msg := format.Msg_format_multi(
@@ -440,7 +439,7 @@ func (v *VerifierNode) requestLock(reading models.Reading) {
 			"item_id", itemID,
 			"request_clk", strconv.Itoa(v.vectorClock[v.nodeIndex]),
 			"clk", strconv.Itoa(v.clk),
-			"vector_clock", our_VC,))
+			"vector_clock", our_VC))
 	v.SendMessage(msg)
 }
 
@@ -451,7 +450,6 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 	requestedSenderID := format.Findval(msg, "sender_id")
 	indexStr := format.Findval(msg, "index")
 	itemID := format.Findval(msg, "item_id")
-
 
 	// msg_VC := format.RetrieveVectorClock(msg, len(v.vectorClock))
 	msgVC_index_str := format.Findval(msg, "request_clk")
@@ -466,19 +464,19 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 		format.Display(format.Format_e(v.GetName(), "handleLockRequest()", "Error parsing vector clock: "+msgVC_index_str))
 		return
 	}
-	
+
 	v.mu.Lock()
-	
+
 	// Initialize map if needed
 	if _, exists := v.lockRequests[itemID]; !exists {
 		v.lockRequests[itemID] = make(map[string]int)
 	}
-	
+
 	// === Determine if we should grant the lock ===
 	canGrant := true
 	if v.processingItems[itemID] { // Check if we are currently processing this item
 		canGrant = false
-	} else if  _, exists := v.lockedItems[itemID]; exists {
+	} else if _, exists := v.lockedItems[itemID]; exists {
 		// Check if we already know that this item is locked in the lockedItems map
 		canGrant = false
 	} else if _, havePendingRequest := v.lockRequests[itemID][v.GetName()]; havePendingRequest {
@@ -492,7 +490,7 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 		}
 	}
 
-	// Add the request to our lock requests if accepted 
+	// Add the request to our lock requests if accepted
 	if canGrant {
 		v.lockRequests[itemID][senderID] = msgVC_index // Add the request to our map
 	}
@@ -511,13 +509,13 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 			"sender_type", v.Type(),
 			"destination", senderID,
 			"vector_clock", our_VC,
-			"clk","",
+			"clk", "",
 			"sender_id", requestedSenderID,
 			"index", indexStr,
 			"item_id", itemID,
 			"granted", strconv.FormatBool(canGrant),
-			))
-	
+		))
+
 	v.SendMessage(replyMsg)
 }
 
@@ -534,19 +532,19 @@ func (v *VerifierNode) handleLockReply(msg string) {
 		format.Display(format.Format_e(v.GetName(), "handleLockReply()", "Error parsing granted value: "+grantedStr))
 		return
 	}
-	
+
 	v.mu.Lock()
-	
+
 	// Initialize map if needed
 	if _, exists := v.lockReplies[itemID]; !exists {
 		v.lockReplies[itemID] = make(map[string]bool)
 	}
-	
+
 	// Record the reply
 	v.lockReplies[itemID][senderID] = granted
 
 	// Check if we have received replies from all verifiers:
-	allReplied := true 
+	allReplied := true
 	canProcess := true
 	for verifierID := range v.otherVerifiers {
 		if _, replied := v.lockReplies[itemID][verifierID]; !replied {
@@ -564,24 +562,23 @@ func (v *VerifierNode) handleLockReply(msg string) {
 		go v.acquiredFullLockOnItem(itemID) // We can process the item
 
 	} else if allReplied && !canProcess {
-		go v.cancelLockRequest(itemID) // We can cancel the lock request 
+		go v.cancelLockRequest(itemID) // We can cancel the lock request
 	}
 }
-
 
 // cancelLockRequest cancels the lock request for an item
 func (v *VerifierNode) cancelLockRequest(itemID string) {
 	v.mu.Lock()
 	// Remove the lock request from our map
 	delete(v.lockRequests, itemID)
-	
+
 	// Remove the lock replies for this item
 	delete(v.lockReplies, itemID)
-	
+
 	// Remove the processing status for this item
 	delete(v.processingItems, itemID)
-	
-	// Remove the item from the pending items 
+
+	// Remove the item from the pending items
 	for i, item := range v.pendingItems {
 		if item.ReadingID == itemID {
 			v.pendingItems = slices.Delete(v.pendingItems, i, i+1)
@@ -592,7 +589,7 @@ func (v *VerifierNode) cancelLockRequest(itemID string) {
 	our_VC := utils.SerializeVectorClock(v.vectorClock)
 
 	v.mu.Unlock()
-	
+
 	// Notify other verifiers that we are not processing this item anymore
 	msg := format.Msg_format_multi(
 		format.Build_msg_args(
@@ -603,12 +600,10 @@ func (v *VerifierNode) cancelLockRequest(itemID string) {
 			"sender_type", v.Type(),
 			"destination", "verifiers",
 			"vector_clock", our_VC,
-			"clk","",
+			"clk", "",
 			"item_id", itemID))
 	v.SendMessage(msg)
 }
-	
-
 
 // acquiredFullLockOnItem is called when the current node has full lock on an item,
 // meaning all other verifiers have granted the lock.
@@ -618,7 +613,7 @@ func (v *VerifierNode) acquiredFullLockOnItem(itemID string) {
 	our_VC := utils.SerializeVectorClock(v.vectorClock)
 	v.mu.Unlock()
 
-	// 1) Notify other verifiers that we have the lock 
+	// 1) Notify other verifiers that we have the lock
 	msg := format.Msg_format_multi(
 		format.Build_msg_args(
 			"id", v.GenerateUniqueMessageID(),
@@ -628,7 +623,7 @@ func (v *VerifierNode) acquiredFullLockOnItem(itemID string) {
 			"sender_type", v.Type(),
 			"destination", "verifiers",
 			"item_id", itemID,
-			"clk","",
+			"clk", "",
 			"vector_clock", our_VC,
 		),
 	)
@@ -644,7 +639,7 @@ func (v *VerifierNode) acquiredFullLockOnItem(itemID string) {
 	v.lockedItems[itemID] = v.GetName() // Item locked by us
 
 	v.mu.Unlock()
-	
+
 	go v.processItem(itemID) // Process the item
 }
 
@@ -656,9 +651,9 @@ func (v *VerifierNode) handleLockAcquired(msg string) {
 
 	v.mu.Lock()
 
-	v.lockedItems[itemID] = senderID // Mark that it has the lock 
+	v.lockedItems[itemID] = senderID // Mark that it has the lock
 
-	// Remove from pendingItems 
+	// Remove from pendingItems
 	for i, item := range v.pendingItems {
 		if item.ReadingID == itemID {
 			v.pendingItems = slices.Delete(v.pendingItems, i, i+1)
@@ -667,7 +662,6 @@ func (v *VerifierNode) handleLockAcquired(msg string) {
 	}
 	v.mu.Unlock()
 }
-
 
 // processItem verifies an item after acquiring the lock
 func (v *VerifierNode) processItem(itemID string) {
@@ -681,13 +675,13 @@ func (v *VerifierNode) processItem(itemID string) {
 		}
 	}
 	v.mu.Unlock()
-	
+
 	// Process the item - perform the verification
 	readingValue := v.getItemReadingValue(itemID)
-	
+
 	// Clamp to acceptable range
 	clampedValue := v.clampToAcceptableRange(readingValue)
-	
+
 	// Update the item status in the database
 	v.markItemAsVerified(itemID, clampedValue, "")
 
@@ -699,7 +693,7 @@ func (v *VerifierNode) processItem(itemID string) {
 func (v *VerifierNode) getItemReadingValue(itemID string) float32 {
 	value, err := v.getValueFromReadingID(itemID)
 	if err != nil {
-		format.Display(format.Format_e(v.GetName(), "getItemReadingValue()", "Error getting value from item ID: "+itemID +".Err is:"+err.Error()))
+		format.Display(format.Format_e(v.GetName(), "getItemReadingValue()", "Error getting value from item ID: "+itemID+".Err is:"+err.Error()))
 		return 0.0
 	}
 	return value
@@ -710,18 +704,18 @@ func (v *VerifierNode) clampToAcceptableRange(value float32) float32 {
 	minValue := v.baseTemp[0]
 	maxValue := v.baseTemp[1]
 
-	// Wait (ie. processing time) before clamping if not 
+	// Wait (ie. processing time) before clamping if not
 	// in the range:
-	if value < minValue - v.threshold || value > maxValue + v.threshold {
+	if value < minValue-v.threshold || value > maxValue+v.threshold {
 		time.Sleep(2 * time.Second)
 	}
-	
+
 	// Take verifier's threshold into account:
-	if value < minValue - v.threshold {
+	if value < minValue-v.threshold {
 		return minValue - v.threshold
 	}
-	if value > maxValue + v.threshold {
-		return maxValue + v.threshold 
+	if value > maxValue+v.threshold {
+		return maxValue + v.threshold
 	}
 
 	return value
@@ -739,19 +733,16 @@ func (v *VerifierNode) markItemAsVerified(itemID string, value float32, verifier
 		}
 	}
 
-	// Remove from processing items if it was there
-	if _, exists := v.processingItems[itemID]; exists {
-		delete(v.processingItems, itemID)
-	}
+	delete(v.processingItems, itemID)
 
-	// By the time the verification is done, the item might have been gone (erased 
-	// because new readings were received). If it is the case (ie. the itemID don't 
+	// By the time the verification is done, the item might have been gone (erased
+	// because new readings were received). If it is the case (ie. the itemID don't
 	// exists anymore), no need to update the verifiedItemIDs nor recentReadings:
-	itemStillPresent, err:= v.isItemInReadings(itemID)
+	itemStillPresent, err := v.isItemInReadings(itemID)
 	if err != nil {
-		format.Display(format.Format_e(v.GetName(), "markIAsVerified()", "Err in isItemInReadings(): "+ err.Error()))
+		format.Display(format.Format_e(v.GetName(), "markIAsVerified()", "Err in isItemInReadings(): "+err.Error()))
 
-	} else if itemStillPresent == false {
+	} else if !itemStillPresent {
 		v.mu.Unlock()
 		return
 	}
@@ -776,7 +767,7 @@ func (v *VerifierNode) markItemAsVerified(itemID string, value float32, verifier
 	v.mu.Lock()
 	v.recentReadings[senderID][readingIndex].IsVerified = true
 	v.recentReadings[senderID][readingIndex].Temperature = value
-	if verifier== "" {
+	if verifier == "" {
 		verifier = v.GetName()
 	}
 	v.recentReadings[senderID][readingIndex].VerifierID = verifier
@@ -796,15 +787,15 @@ func (v *VerifierNode) releaseLock(itemID string) {
 	delete(v.lockReplies, itemID)
 	delete(v.lockedItems, itemID)
 	v.mu.Unlock()
-	
-	// By the time the verification is done, the item might have been gone (erased 
-	// because new readings were received). If it is the case (ie. the itemID don't 
-	// exists anymore), no need to update the verifiedItemIDs nor recentReadings:
-	itemStillPresent, err:= v.isItemInReadings(itemID)
-	if err != nil {
-		format.Display(format.Format_e(v.GetName(), "releaseLock()", "Err is isItemInReadings(): " + err.Error()))
 
-	} else if itemStillPresent == false {
+	// By the time the verification is done, the item might have been gone (erased
+	// because new readings were received). If it is the case (ie. the itemID don't
+	// exists anymore), no need to update the verifiedItemIDs nor recentReadings:
+	itemStillPresent, err := v.isItemInReadings(itemID)
+	if err != nil {
+		format.Display(format.Format_e(v.GetName(), "releaseLock()", "Err is isItemInReadings(): "+err.Error()))
+
+	} else if !itemStillPresent {
 		return
 	}
 
@@ -813,13 +804,12 @@ func (v *VerifierNode) releaseLock(itemID string) {
 	itemValue, err := v.getValueFromReadingID(itemID)
 	if err != nil {
 		// If the item does not exist anymore, it means the queue erased it.
-		// So other verifiers will do them same, so no need to release the lock. 
-		// If they didn't received the new reading so didn't erase the item in question, 
+		// So other verifiers will do them same, so no need to release the lock.
+		// If they didn't received the new reading so didn't erase the item in question,
 		// keeping the lock here will reduce useless messaging.
-		format.Display(format.Format_e(v.GetName(), "releaseLock()", "Error getting value from item ID: "+itemID +".Err is:"+err.Error()))
+		format.Display(format.Format_e(v.GetName(), "releaseLock()", "Error getting value from item ID: "+itemID+".Err is:"+err.Error()))
 		return
 	}
-
 
 	v.mu.Lock()
 	our_VC := utils.SerializeVectorClock(v.vectorClock)
@@ -833,9 +823,9 @@ func (v *VerifierNode) releaseLock(itemID string) {
 			"sender_type", v.Type(),
 			"destination", "verifiers",
 			"item_id", itemID,
-			"content_type","verified_value",
+			"content_type", "verified_value",
 			"content_value", strconv.FormatFloat(float64(itemValue), 'f', 2, 32),
-			"clk","",
+			"clk", "",
 			"vector_clock", our_VC,
 		))
 
@@ -843,7 +833,6 @@ func (v *VerifierNode) releaseLock(itemID string) {
 
 	v.SendMessage(releaseMsg)
 }
-
 
 // handleLockRelease processes a lock release message from another verifier
 func (v *VerifierNode) handleLockRelease(msg string) {
@@ -856,7 +845,6 @@ func (v *VerifierNode) handleLockRelease(msg string) {
 		return
 	}
 
-	
 	v.mu.Lock()
 	// Clean up any requests or replies for this item:
 	delete(v.lockRequests, itemID)
@@ -873,7 +861,7 @@ func (v *VerifierNode) handleLockRelease(msg string) {
 // Helper function for using the `Reading` struct
 
 // getValueFromReadingID retrieves the temperature value from a reading ID
-// Assumption: itemID are in the format "senderID_index" 
+// Assumption: itemID are in the format "senderID_index"
 func (v *VerifierNode) getValueFromReadingID(itemID string) (float32, error) {
 	// Split the item ID into sender ID and index
 	parts := strings.Split(itemID, "_")
@@ -881,15 +869,15 @@ func (v *VerifierNode) getValueFromReadingID(itemID string) (float32, error) {
 		return 0.0, fmt.Errorf("invalid item ID format")
 	}
 	senderID := parts[0]
-	
-	// Check if the sender ID exists in the recent readings 
-	// (function might be called with wrong sender ID). And then 
+
+	// Check if the sender ID exists in the recent readings
+	// (function might be called with wrong sender ID). And then
 	// find the reading for this sender.
 	v.mu.Lock()
 	queue, exists := v.recentReadings[senderID]
 	v.mu.Unlock()
 	if !exists {
-		return 0.0, fmt.Errorf("No sender <" + senderID  + "> in v.recentReadings.")
+		return 0.0, fmt.Errorf("No sender <" + senderID + "> in v.recentReadings.")
 	} else {
 		// Find the reading for this sender
 		for _, rItem := range queue {
@@ -899,30 +887,30 @@ func (v *VerifierNode) getValueFromReadingID(itemID string) (float32, error) {
 			}
 		}
 	}
-	
+
 	return 0.0, fmt.Errorf("item " + itemID + " from sender " + senderID + " not found in v.recentReadings")
 }
 func (v *VerifierNode) getReadingIndexFromSender_ID(senderID string, itemID string) (int, error) {
-	// Check if the sender ID exists in the recent readings 
+	// Check if the sender ID exists in the recent readings
 	v.mu.Lock()
 	queue, exists := v.recentReadings[senderID]
 	v.mu.Unlock()
-	
+
 	if !exists {
 		return -1, fmt.Errorf("item not found")
 	}
-	
+
 	// Find the index of the item ID in the queue
 	for i, reading := range queue {
 		if reading.ReadingID == itemID {
 			return i, nil
 		}
 	}
-	
+
 	return -1, fmt.Errorf("item not found")
 }
 
-// isItemInReadings returns true if the given ItemID exists 
+// isItemInReadings returns true if the given ItemID exists
 // for its associated sender (fetched within the itemID).
 // It is used when operation on a models.Reading, as it might
 // have been erased if FIFO was full.
@@ -939,6 +927,7 @@ func (v *VerifierNode) isItemInReadings(itemID string) (bool, error) {
 	}
 	return false, nil
 }
+
 // ====================== END OF MODEL `READING` LOGIC ======================
 
 func (v *VerifierNode) logReceivedReading(sender string, temperature float64, stateCode int) {
@@ -955,13 +944,13 @@ func (v *VerifierNode) logReceivedReading(sender string, temperature float64, st
 		f.WriteString(line)
 	}
 }
-func (n* VerifierNode) GetLocalState() string {
+func (n *VerifierNode) GetLocalState() string {
 	n.mu.Lock()
 	snap_content := ""
 	for senderID, readings := range n.recentReadings {
 		snap_content += senderID + ": ["
 		for _, reading := range readings {
-			snap_content += reading.ReadingID + ","+strconv.FormatFloat(float64(reading.Temperature), 'f', 2, 32) + "," + strconv.Itoa(reading.Clock) + "," + strconv.FormatBool(reading.IsVerified) + "," + reading.VerifierID + ";"
+			snap_content += reading.ReadingID + "," + strconv.FormatFloat(float64(reading.Temperature), 'f', 2, 32) + "," + strconv.Itoa(reading.Clock) + "," + strconv.FormatBool(reading.IsVerified) + "," + reading.VerifierID + ";"
 		}
 		snap_content += "]"
 		snap_content += utils.PearD_SITE_SEPARATOR

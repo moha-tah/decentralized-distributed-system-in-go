@@ -2,6 +2,8 @@
 
 declare -a PIDS=()
 
+go build -o main main.go
+
 ./main verifier 1 &
 PIDS+=($!)
 
