@@ -1,14 +1,16 @@
 package node
 
 import (
+	// "bufio"
 	"distributed_system/format"
 	"distributed_system/utils"
+
+	// "os"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
-	// "time"
-	// "strings"
 	// "os" // Use for the bufio reader: reads from os stdin
 	// "bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
 )
@@ -173,9 +175,9 @@ func (c *ControlLayer) Start() error {
 	// 	c.directNeighborsEnd = true // We know our directNeighbors
 	// 	c.mu.Unlock()
 	//
-	// 	c.child.Start()
 	// }()
 
+	c.child.Start()
 	c.isRunning = true
 
 	// Go routine to read messages from stdin and call HandleMessage() on each new message.
@@ -289,13 +291,43 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		case "tree_red": // tree construction message (red messages from lecture)
 			c.processRedTree(msg)
 		case "new_node":
-			format.Display_d(c.GetName(), "HandleMsg()", "New node received: "+format.Findval(msg, "new_node"))
-			propagate_msg = false // Network layer handles propagation of this message
-			c.SendMsgToNetwork(format.Build_msg(
-				"sender_name", c.GetName(),
-				"type", "control_msg",
-				"propagation", "true",
-			))
+			format.Display_g(c.GetName(), "HandleMessage()", "New node received: "+format.Findval(msg, "new_node")+". Resizing Vector Clocks.")
+
+			newPeersStr := format.Findval(msg, "known_peers")
+			// The network layer sends peer IDs, but the control layer works with full names.
+			// We need to reconstruct the full names from the IDs.
+			newPeerIDs := strings.Split(newPeersStr, utils.PearD_SITE_SEPARATOR)
+			newPeerNames := make([]string, len(newPeerIDs))
+			for i, id := range newPeerIDs {
+				// This assumes a consistent naming convention for control layers.
+				newPeerNames[i] = "control (" + id + "_control)"
+			}
+			slices.Sort(newPeerNames)
+
+			// --- Get old state from ControlLayer and Child ---
+			c.mu.Lock()
+			oldSiteNames := c.knownSiteNames
+			oldControlVC := c.vectorClock
+			c.mu.Unlock()
+			oldChildVC := c.child.GetVectorClock()
+
+			// --- Compute new vector clocks ---
+			newControlVC := resizeVC(oldControlVC, oldSiteNames, newPeerNames)
+			newChildVC := resizeVC(oldChildVC, oldSiteNames, newPeerNames)
+
+			// --- Atomically update ControlLayer state ---
+			c.mu.Lock()
+			c.knownSiteNames = newPeerNames
+			c.nbOfKnownSites = len(newPeerNames)
+			c.vectorClock = newControlVC
+			c.nodeIndex = utils.FindIndex(c.GetName(), newPeerNames)
+			c.mu.Unlock()
+
+			// --- Update Child state ---
+			c.child.SetVectorClock(newChildVC, newPeerNames)
+
+			format.Display_g(c.GetName(), "HandleMessage()", "Vector clocks resized to size "+strconv.Itoa(len(newPeerNames)))
+			propagate_msg = false
 		}
 
 	} else if msg_destination == "verifiers" {
@@ -348,4 +380,30 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 	}
 
 	return nil
+}
+
+// resizeVC creates a new vector clock of a new size, preserving the values
+// from the old vector clock for sites that still exist.
+func resizeVC(oldVC []int, oldSites []string, newSites []string) []int {
+	newVC := make([]int, len(newSites))
+
+	// Create a map of old site names to their clock value for efficient lookup
+	oldSiteValueMap := make(map[string]int)
+	for i, siteName := range oldSites {
+		if i < len(oldVC) {
+			oldSiteValueMap[siteName] = oldVC[i]
+		}
+	}
+
+	// Populate the new vector clock
+	for i, newSiteName := range newSites {
+		if val, ok := oldSiteValueMap[newSiteName]; ok {
+			// This site existed before, so copy its old value
+			newVC[i] = val
+		} else {
+			// This is a new site, initialize its clock to 0
+			newVC[i] = 0
+		}
+	}
+	return newVC
 }
