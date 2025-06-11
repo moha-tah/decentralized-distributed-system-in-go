@@ -53,7 +53,7 @@ type ControlLayer struct {
 	nbExpectedTreeAnswers int
 
 	// Network related fields:
-	networkLayer 		*NetworkLayer // Reference to the network layer for sending messages
+	networkLayer *NetworkLayer // Reference to the network layer for sending messages
 }
 
 func (c *ControlLayer) GetName() string {
@@ -96,7 +96,7 @@ func NewControlLayer(id string, child Node) *ControlLayer {
 	}
 }
 
-func (c*ControlLayer) SetNetworkLayer(networkLayer *NetworkLayer) {
+func (c *ControlLayer) SetNetworkLayer(networkLayer *NetworkLayer) {
 	c.mu.Lock()
 	c.networkLayer = networkLayer
 	c.mu.Unlock()
@@ -106,7 +106,7 @@ func (c*ControlLayer) SetNetworkLayer(networkLayer *NetworkLayer) {
 func (c *ControlLayer) Start() error {
 
 	for c.networkLayer == nil {
-		time.Sleep(time.Duration(1) * time.Second) // Wait for the network layer to be set 
+		time.Sleep(time.Duration(1) * time.Second) // Wait for the network layer to be set
 	}
 
 	format.Display(format.Format_d(c.GetName(), "Start()", "Starting control layer "+c.GetName()))
@@ -132,23 +132,23 @@ func (c *ControlLayer) Start() error {
 
 			// 2. Send pear discovery to know all nodes in the network
 			c.SendPearDiscovery()
-		// 	time.Sleep(time.Duration(2) * time.Second)
-		//
-		// 	// 3. Close the pear discovery (=send all received names to all nodes)
-		// 	c.ClosePearDiscovery() // Will send known names to all nodes
-		// 	time.Sleep(time.Duration(1) * time.Second)
-		//
-		// 	// 4. Start tree construction only after we know our neighbors
-		// 	c.mu.Lock()
-		// 	directNeighborsEnd := c.directNeighborsEnd
-		// 	c.mu.Unlock()
-		// 	for directNeighborsEnd == false {
-		// 		time.Sleep(time.Duration(100) * time.Millisecond)
-		// 		c.mu.Lock()
-		// 		directNeighborsEnd = c.directNeighborsEnd
-		// 		c.mu.Unlock()
-		// 	}
-		// 	c.SendTreeConstruction()
+			// 	time.Sleep(time.Duration(2) * time.Second)
+			//
+			// 	// 3. Close the pear discovery (=send all received names to all nodes)
+			// 	c.ClosePearDiscovery() // Will send known names to all nodes
+			// 	time.Sleep(time.Duration(1) * time.Second)
+			//
+			// 	// 4. Start tree construction only after we know our neighbors
+			// 	c.mu.Lock()
+			// 	directNeighborsEnd := c.directNeighborsEnd
+			// 	c.mu.Unlock()
+			// 	for directNeighborsEnd == false {
+			// 		time.Sleep(time.Duration(100) * time.Millisecond)
+			// 		c.mu.Lock()
+			// 		directNeighborsEnd = c.directNeighborsEnd
+			// 		c.mu.Unlock()
+			// 	}
+			// 	c.SendTreeConstruction()
 		}()
 		// //demande de snapshot après 5 secondes
 		// go func() {
@@ -198,7 +198,7 @@ func (c *ControlLayer) Start() error {
 
 // HandleMessage processes incoming messages
 func (c *ControlLayer) HandleMessage(msg string) error {
-	format.Display_d(c.GetName(), "HandleMessage()", "Received message of type: "+format.Findval(msg, "type")+" by "+format.Findval(msg, "sender_name_source") + " through node " + format.Findval(msg, "sender_name"))
+	format.Display_d(c.GetName(), "HandleMessage()", "Received message of type: "+format.Findval(msg, "type")+" by "+format.Findval(msg, "sender_name_source")+" through node "+format.Findval(msg, "sender_name"))
 	// Make sure we never saw this message before.
 	// It might happen eg. in a bidirectionnal ring.
 	// If it is the case (= duplicate) => ignore.
@@ -295,7 +295,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 				"sender_name", c.GetName(),
 				"type", "control_msg",
 				"propagation", "true",
-				))
+			))
 		}
 
 	} else if msg_destination == "verifiers" {
