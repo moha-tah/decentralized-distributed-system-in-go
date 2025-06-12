@@ -16,26 +16,25 @@ import (
 )
 
 type SnapshotData struct {
-	VectorClock 	[]int
-	Content     	string
-	Initiator   	string
-	BufferedMsg 	[]string
-	NodeName	string
+	VectorClock []int
+	Content     string
+	Initiator   string
+	BufferedMsg []string
+	NodeName    string
 }
 
 type GlobalSnapshot struct {
-	SnapshotId 	string
-	VectorClock	[]int
-	Initiator  	string
-	Data 		[]SnapshotData
+	SnapshotId  string
+	VectorClock []int
+	Initiator   string
+	Data        []SnapshotData
 }
-
 
 var snap_fieldsep = consts.Snap_fieldsep
 var snap_keyvalsep = consts.Snap_keyvalsep
-var snap_bfmssage_fieldsep = consts.Snap_bfmssage_fieldsep
-var snap_bfmssage_keyvalsep = consts.Fieldsep
 
+// var snap_bfmssage_fieldsep = consts.Snap_bfmssage_fieldsep
+// var snap_bfmssage_keyvalsep = consts.Fieldsep
 
 // handleSnapshotMsg handles snapshot messages and takes appropriate actions.
 // It checks if the message is a snapshot request, marker, or response and processes it accordingly.
@@ -112,9 +111,7 @@ func (c *ControlLayer) handleSnapshotMsg(msg string) bool {
 		subTreeState := c.subTreeState
 		// no need to sync vclk, as it will be sync before sending snap data to parent:
 		// subTreeState.VectorClock = utils.SynchroniseVectorClock(c.vectorClock, state.VectorClock, c.nodeIndex)
-		for _, snapshotData := range state.Data {
-			subTreeState.Data = append(subTreeState.Data, snapshotData)
-		}
+		subTreeState.Data = append(subTreeState.Data, state.Data...)
 		c.nbSnapResponsePending -= 1
 		c.subTreeState = subTreeState
 		nbSnapResponses := c.nbSnapResponsePending
@@ -201,7 +198,6 @@ func (c *ControlLayer) sendSnapshotResponse() {
 	))
 	c.SendMsg(response)
 }
-
 
 func (c *ControlLayer) takeSnapshotAndPropagate(snapshot_id int, initiator string) {
 	c.mu.Lock()
@@ -290,8 +286,7 @@ func (c *ControlLayer) RequestSnapshot() {
 	}
 }
 
-
-// Converts SnapshotData struct to string format using custom delimiters. 
+// Converts SnapshotData struct to string format using custom delimiters.
 // Handles vector clocks and buffered messages serialization.
 func SerializeSnapshotData(sdata SnapshotData) string {
 	snap_field := ""
@@ -299,17 +294,17 @@ func SerializeSnapshotData(sdata SnapshotData) string {
 	snap_field += snap_fieldsep + snap_keyvalsep + "snap_node_name" + snap_keyvalsep + sdata.NodeName
 	snap_field += snap_fieldsep + snap_keyvalsep + "snap_vclk" + snap_keyvalsep + utils.SerializeVectorClock(sdata.VectorClock)
 	snap_field += snap_fieldsep + snap_keyvalsep + "snap_content" + snap_keyvalsep + sdata.Content
-	snap_field += snap_fieldsep + snap_keyvalsep + "snap_buffered_msgs" + snap_keyvalsep 
+	snap_field += snap_fieldsep + snap_keyvalsep + "snap_buffered_msgs" + snap_keyvalsep
 	for _, bf_msg := range sdata.BufferedMsg {
 		snap_field += consts.Snap_bfmssage_fieldsep + consts.Snap_bfmssage_keyvalsep
 		keyvals := strings.Split(bf_msg, consts.Fieldsep)
-		for idx, keyval := range  keyvals {
+		for idx, keyval := range keyvals {
 			if keyval == "" {
 				continue
 			}
 			keyval_parts := strings.Split(keyval[1:], consts.Keyvalsep)
 			snap_field += keyval_parts[0] + consts.Snap_bfmssage_keyvalsep + keyval_parts[1]
-			if idx != len(keyvals) -1 {
+			if idx != len(keyvals)-1 {
 				snap_field += consts.Snap_bfmssage_fieldsep
 			}
 			// for _, m := range keyval_parts {
@@ -321,17 +316,16 @@ func SerializeSnapshotData(sdata SnapshotData) string {
 	return snap_field
 }
 
-
-// Reconstructs SnapshotData from serialized string. 
+// Reconstructs SnapshotData from serialized string.
 // Parses fields and rebuilds buffered messages with proper formatting.
 func DeserializeSnapshotData(snap_field string) SnapshotData {
 	initiator := format.Findval(snap_field, "snap_initiator")
 	vectorClock := format.Findval(snap_field, "snap_vclk")
 	content := format.Findval(snap_field, "snap_content")
 	nodeName := format.Findval(snap_field, "snap_node_name")
-	var bufferedMsgs []string 
+	var bufferedMsgs []string
 	bfMsgField := format.Findval(snap_field, "snap_buffered_msgs")
-	for _, bfm_msg := range strings.Split(bfMsgField, consts.Snap_bfmssage_fieldsep + consts.Snap_bfmssage_keyvalsep) {
+	for _, bfm_msg := range strings.Split(bfMsgField, consts.Snap_bfmssage_fieldsep+consts.Snap_bfmssage_keyvalsep) {
 		current_msg := consts.Fieldsep + consts.Keyvalsep
 		keyval_parts := strings.Split(bfm_msg, consts.Snap_bfmssage_fieldsep)
 		for idx, keyval_part := range keyval_parts {
@@ -340,11 +334,11 @@ func DeserializeSnapshotData(snap_field string) SnapshotData {
 			}
 			keyval := strings.Split(keyval_part, consts.Snap_bfmssage_keyvalsep)
 			current_msg += keyval[0] + consts.Keyvalsep + keyval[1]
-			if idx != len(keyval_parts) -1 {
+			if idx != len(keyval_parts)-1 {
 				current_msg += consts.Fieldsep + consts.Keyvalsep
 			}
 		}
-		if current_msg != consts.Fieldsep + consts.Keyvalsep {
+		if current_msg != consts.Fieldsep+consts.Keyvalsep {
 			bufferedMsgs = append(bufferedMsgs, current_msg)
 		}
 	}
@@ -354,16 +348,16 @@ func DeserializeSnapshotData(snap_field string) SnapshotData {
 		format.Display(format.Format_e("DSData", "DSData", "Error with deserializing VC: "+err.Error()))
 	}
 	return SnapshotData{
-		Initiator: initiator,
+		Initiator:   initiator,
 		VectorClock: vc,
-		Content: content,
+		Content:     content,
 		BufferedMsg: bufferedMsgs,
-		NodeName: nodeName,
+		NodeName:    nodeName,
 	}
-		
+
 }
 
-// Converts GlobalSnapshot to string. Serializes metadata first, then all node snapshots. 
+// Converts GlobalSnapshot to string. Serializes metadata first, then all node snapshots.
 // Note: snap_data field must be last.
 func SerializeGlobalSnapshot(gdata GlobalSnapshot) string {
 	snap_field := snap_fieldsep + snap_keyvalsep + "snap_id" + snap_keyvalsep + gdata.SnapshotId
@@ -373,7 +367,7 @@ func SerializeGlobalSnapshot(gdata GlobalSnapshot) string {
 	//🔥 The "snap_data" field MUST BE AT THE END (no other fields after it)
 	if len(gdata.Data) > 0 {
 		snap_field += snap_fieldsep + snap_keyvalsep + "snap_data" + snap_keyvalsep
-		
+
 		for _, sdata := range gdata.Data {
 			snap_field += consts.Snap_bfmssage_fieldsep + consts.Snap_bfmssage_fieldsep + SerializeSnapshotData(sdata)
 		}
@@ -381,7 +375,7 @@ func SerializeGlobalSnapshot(gdata GlobalSnapshot) string {
 	return snap_field
 }
 
-// Reconstructs GlobalSnapshot from string. Extracts metadata, locates data section, 
+// Reconstructs GlobalSnapshot from string. Extracts metadata, locates data section,
 // and deserializes individual node snapshots.
 func DeserializeGlobalSnapshot(snap_field string) GlobalSnapshot {
 	initiator := format.Findval(snap_field, "snap_initiator")
@@ -395,8 +389,8 @@ func DeserializeGlobalSnapshot(snap_field string) GlobalSnapshot {
 		format.Display(format.Format_e("DSData", "DSData", "Error with deserializing GlobalSnapshot: no data field"))
 	}
 	sdataField := snap_field[start_index:]
-	
-	for _, sdata := range strings.Split(sdataField, consts.Snap_bfmssage_fieldsep + consts.Snap_bfmssage_fieldsep) {
+
+	for _, sdata := range strings.Split(sdataField, consts.Snap_bfmssage_fieldsep+consts.Snap_bfmssage_fieldsep) {
 		if sdata == "" {
 			continue
 		}
@@ -407,91 +401,91 @@ func DeserializeGlobalSnapshot(snap_field string) GlobalSnapshot {
 		format.Display(format.Format_e("DSData", "DSData", "Error with deserializing VC: "+err.Error()))
 	}
 	return GlobalSnapshot{
-		SnapshotId: snapshotId,
+		SnapshotId:  snapshotId,
 		VectorClock: vc,
-		Initiator: initiator,
-		Data: data,
+		Initiator:   initiator,
+		Data:        data,
 	}
 }
 
-
-
 // CheckConsistency scans through all collected SnapshotData,
 // builds a map from nodeID → vectorClock, and then verifies
-//    for all i,j:  vcMap[i][j] ≤ vcMap[j][j].
+//
+//	for all i,j:  vcMap[i][j] ≤ vcMap[j][j].
+//
 // If any check fails, the cut is inconsistent.
 func (c *ControlLayer) CheckConsistency() bool {
 	c.mu.Lock()
-    // 1) Build a map[int][]int where the key is nodeID, and the value is that node's VC slice.
-    vcMap := make(map[int][]int)
+	// 1) Build a map[int][]int where the key is nodeID, and the value is that node's VC slice.
+	vcMap := make(map[int][]int)
 
-    // Use a regex to extract the integer ID out of NodeName, which has form "control (3_control)" etc.
-    re := regexp.MustCompile(`\((\d+)_`)
+	// Use a regex to extract the integer ID out of NodeName, which has form "control (3_control)" etc.
+	re := regexp.MustCompile(`\((\d+)_`)
 
-    for _, sd := range c.subTreeState.Data {
-        // Extract the node ID as an integer
-        m := re.FindStringSubmatch(sd.NodeName)
-        if m == nil {
-		format.Display(format.Format_e(c.GetName(), "CheckConsistency()", "Could not parse node ID from NodeName: "+sd.NodeName))
-        	return false
-        }
-        id, err := strconv.Atoi(m[1])
-        if err != nil {
-		format.Display(format.Format_e(c.GetName(), "CheckConsistency()", "Error parsing node ID from NodeName: "+sd.NodeName+" - "+err.Error()))
-        	return false
-        }
+	for _, sd := range c.subTreeState.Data {
+		// Extract the node ID as an integer
+		m := re.FindStringSubmatch(sd.NodeName)
+		if m == nil {
+			format.Display(format.Format_e(c.GetName(), "CheckConsistency()", "Could not parse node ID from NodeName: "+sd.NodeName))
+			return false
+		}
+		id, err := strconv.Atoi(m[1])
+		if err != nil {
+			format.Display(format.Format_e(c.GetName(), "CheckConsistency()", "Error parsing node ID from NodeName: "+sd.NodeName+" - "+err.Error()))
+			return false
+		}
 
-        // Store the vector clock slice
-        vcMap[id] = sd.VectorClock
-    }
+		// Store the vector clock slice
+		vcMap[id] = sd.VectorClock
+	}
 
-    // 2) If we have M nodes in the map, we expect each VC slice to have length ≥ M.
-    //    => Find the maximum nodeID to know how many positions to check.
-    maxID := -1
-    for id := range vcMap {
-        if id > maxID {
-            maxID = id
-        }
-    }
-    N := maxID + 1
+	// 2) If we have M nodes in the map, we expect each VC slice to have length ≥ M.
+	//    => Find the maximum nodeID to know how many positions to check.
+	maxID := -1
+	for id := range vcMap {
+		if id > maxID {
+			maxID = id
+		}
+	}
+	N := maxID + 1
 
-    // 3) Verify that every vector‐clock slice is at least length N
-    for id, vc := range vcMap {
-        if len(vc) < N {
-		format.Display(format.Format_w(c.GetName(), "CheckConsistency()",
-		"⚠️  VectorClock for node "+strconv.Itoa(id)+" has length "+strconv.Itoa(len(vc))+", but expected at least "+strconv.Itoa(N)+" entries"))
-            return false
-        }
-    }
+	// 3) Verify that every vector‐clock slice is at least length N
+	for id, vc := range vcMap {
+		if len(vc) < N {
+			format.Display(format.Format_w(c.GetName(), "CheckConsistency()",
+				"⚠️  VectorClock for node "+strconv.Itoa(id)+" has length "+strconv.Itoa(len(vc))+", but expected at least "+strconv.Itoa(N)+" entries"))
+			return false
+		}
+	}
 
-    // 4) Now check the consistency condition:
-    //    For every pair (i, j), we must have vcMap[i][j] ≤ vcMap[j][j].
-    consistent := true
-    for i, vci := range vcMap {
-        for j := 0; j < N; j++ {
-            // If node j wasn't present in vcMap, that is already wrong.
-            vcj, exists := vcMap[j]
-            if !exists {
-		format.Display(format.Format_w(c.GetName(), "CheckConsistency()",
-			"⚠️  Missing snapshot data for node "+strconv.Itoa(j)))
-                return false
-            }
-            if vci[j] > vcj[j] {
-		format.Display(format.Format_w(c.GetName(), "CheckConsistency()",
-			"⚠️  Inconsistency detected: VC["+strconv.Itoa(i)+"]["+strconv.Itoa(j)+"] = "+strconv.Itoa(vci[j])+
-			"  >  VC["+strconv.Itoa(j)+"]["+strconv.Itoa(j)+"] = "+strconv.Itoa(vcj[j])))
-                consistent = false
-            }
-        }
-    }
+	// 4) Now check the consistency condition:
+	//    For every pair (i, j), we must have vcMap[i][j] ≤ vcMap[j][j].
+	consistent := true
+	for i, vci := range vcMap {
+		for j := 0; j < N; j++ {
+			// If node j wasn't present in vcMap, that is already wrong.
+			vcj, exists := vcMap[j]
+			if !exists {
+				format.Display(format.Format_w(c.GetName(), "CheckConsistency()",
+					"⚠️  Missing snapshot data for node "+strconv.Itoa(j)))
+				return false
+			}
+			if vci[j] > vcj[j] {
+				format.Display(format.Format_w(c.GetName(), "CheckConsistency()",
+					"⚠️  Inconsistency detected: VC["+strconv.Itoa(i)+"]["+strconv.Itoa(j)+"] = "+strconv.Itoa(vci[j])+
+						"  >  VC["+strconv.Itoa(j)+"]["+strconv.Itoa(j)+"] = "+strconv.Itoa(vcj[j])))
+				consistent = false
+			}
+		}
+	}
 
-    if consistent {
-	format.Display(format.Format_g(c.GetName(), "CheckConsistency()", "✅  The global cut is consistent (all VC[i][j] ≤ VC[j][j])."))
-    } else {
-	format.Display(format.Format_w(c.GetName(), "CheckConsistency()", "⚠️  The global cut is NOT consistent (some VC[i][j] > VC[j][j])."))
-    }
+	if consistent {
+		format.Display(format.Format_g(c.GetName(), "CheckConsistency()", "✅  The global cut is consistent (all VC[i][j] ≤ VC[j][j])."))
+	} else {
+		format.Display(format.Format_w(c.GetName(), "CheckConsistency()", "⚠️  The global cut is NOT consistent (some VC[i][j] > VC[j][j])."))
+	}
 	c.mu.Unlock()
-    return consistent
+	return consistent
 }
 
 func (c *ControlLayer) SaveSnapshotToCSVThreadSafe(snapshots map[string]SnapshotData) {

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
 	// Server and JSON libraries:
 	"encoding/json"
 	"net/http"
@@ -18,22 +19,22 @@ import (
 // UserNode represents a user in the system
 type UserNode struct {
 	BaseNode
-	predictionFunc	   func (values []float32, decay float32) float32
-	model	           string		       // Model type (linear or exponential)
-	decayFactor	   float32 		       // Decay factor in some prediction functions
-	lastPrediction     *float32                    // pointer to allow nil value at start
-	recentReadings     map[string][]models.Reading // FIFO queue per sender
-	recentPredictions  map[string][]float32        // FIFO queue per sender of made predictions
-	verifiedItemIDs    map[string][]string         // Tracks the verified item for each sender by their ID
-	httpServer         *http.Server                // HTTP server for web UI
-	port               int                         // HTTP server port
+	predictionFunc    func(values []float32, decay float32) float32
+	model             string                      // Model type (linear or exponential)
+	decayFactor       float32                     // Decay factor in some prediction functions
+	lastPrediction    *float32                    // pointer to allow nil value at start
+	recentReadings    map[string][]models.Reading // FIFO queue per sender
+	recentPredictions map[string][]float32        // FIFO queue per sender of made predictions
+	verifiedItemIDs   map[string][]string         // Tracks the verified item for each sender by their ID
+	httpServer        *http.Server                // HTTP server for web UI
+	port              int                         // HTTP server port
 }
 
 // NewUserNode creates a new user node
 func NewUserNode(id string, model string, port int) *UserNode {
 
 	// Set the prediction function based on the model type
-	var predFunction func (values []float32, decay float32) float32
+	var predFunction func(values []float32, decay float32) float32
 	var decayFactor float32 = 0.0
 	if model == "exp" {
 		predFunction = models.DecayedWeightedMean
@@ -44,22 +45,22 @@ func NewUserNode(id string, model string, port int) *UserNode {
 	}
 
 	return &UserNode{
-		BaseNode:           NewBaseNode(id, "user"),
-		predictionFunc:     predFunction,
-		model:              model,
-		decayFactor:        decayFactor,
-		lastPrediction:     nil,
-		recentReadings:     make(map[string][]models.Reading),
-		recentPredictions:  make(map[string][]float32),
-		verifiedItemIDs:    make(map[string][]string),
-		port:               port,
+		BaseNode:          NewBaseNode(id, "user"),
+		predictionFunc:    predFunction,
+		model:             model,
+		decayFactor:       decayFactor,
+		lastPrediction:    nil,
+		recentReadings:    make(map[string][]models.Reading),
+		recentPredictions: make(map[string][]float32),
+		verifiedItemIDs:   make(map[string][]string),
+		port:              port,
 	}
 }
 
 // Start begins the verifier's operation
 func (u *UserNode) Start() error {
-	format.Display(format.Format_d("node_user.go", "Start()", "Starting user node "+u.GetName() + " on port "+strconv.Itoa(u.port)))
-	
+	format.Display(format.Format_d("node_user.go", "Start()", "Starting user node "+u.GetName()+" on port "+strconv.Itoa(u.port)))
+
 	// Start the HTTP server for web UI
 	go u.startWebServer()
 
@@ -123,15 +124,15 @@ func (u *UserNode) HandleMessage(channel chan string) {
 				// Remove all occurrences of the readingID from the verifiedItemIDs map
 				for senderID, itemIDs := range u.verifiedItemIDs {
 					u.verifiedItemIDs[senderID] = utils.RemoveAllOccurrencesString(itemIDs, queue[0].ReadingID)
-					}
+				}
 
 				// Remove the oldest element (slice trick)
 				queue = queue[1:]
 			}
 			queue = append(queue, models.Reading{
-				ReadingID: format.Findval(msg, "item_id"),
+				ReadingID:   format.Findval(msg, "item_id"),
 				Temperature: float32(readingVal),
-				Clock:   clk_int,
+				Clock:       clk_int,
 				SensorID:    msg_sender,
 				IsVerified:  false,
 			})
@@ -142,7 +143,6 @@ func (u *UserNode) HandleMessage(channel chan string) {
 		case "lock_release_and_verified_value":
 			go u.handleLockRelease(msg)
 
-		
 		case "snapshot_request":
 			format.Display(format.Format_d(
 				u.GetName(), "HandleMessage()",
@@ -174,7 +174,6 @@ func (u *UserNode) HandleMessage(channel chan string) {
 				u.SendMessage(response, true)
 			}
 
-
 			u.mu.Lock()
 			u.nbMsgSent++
 			u.mu.Unlock()
@@ -184,7 +183,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 	}
 }
 
-func (v *UserNode) SendMessage(msg string, toHandleMessageArgs...bool) {
+func (v *UserNode) SendMessage(msg string, toHandleMessageArgs ...bool) {
 	toHandleMessage := false
 	if len(toHandleMessageArgs) > 0 {
 		toHandleMessage = toHandleMessageArgs[0]
@@ -200,7 +199,6 @@ func (v *UserNode) SendMessage(msg string, toHandleMessageArgs...bool) {
 	}
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(v_clk))
 	msg = format.Replaceval(msg, "id", v.GenerateUniqueMessageID())
-
 
 	if toHandleMessage {
 		v.ctrlLayer.HandleMessage(msg)
@@ -232,19 +230,19 @@ func (n *UserNode) handleLockRelease(msg string) {
 
 	n.mu.Lock()
 
-	// By the time the verification is done, the item might have been gone (erased 
-	// because new readings were received). If it is the case (ie. the itemID don't 
+	// By the time the verification is done, the item might have been gone (erased
+	// because new readings were received). If it is the case (ie. the itemID don't
 	// exists anymore), no need to update the verifiedItemIDs nor recentReadings:
-	isItemInReadings := false 
+	isItemInReadings := false
 	readingIndex := -1
 	for i, reading := range n.recentReadings[sensorID] {
 		if reading.ReadingID == itemID {
-			isItemInReadings = true 
+			isItemInReadings = true
 			readingIndex = i
 			break
 		}
 	}
-	if isItemInReadings == false {
+	if !isItemInReadings {
 		n.mu.Unlock()
 		return
 	}
@@ -267,12 +265,11 @@ func (n *UserNode) handleLockRelease(msg string) {
 	n.processDatabse()
 }
 
-
 func (n *UserNode) processDatabse() {
 
-	// One prediction per sensor: 
+	// One prediction per sensor:
 	n.mu.Lock()
-	recentReadings := n.recentReadings 
+	recentReadings := n.recentReadings
 	n.mu.Unlock()
 	for sensor, readings := range recentReadings {
 		var readingValues []float32 = make([]float32, len(readings))
@@ -301,7 +298,7 @@ func (n *UserNode) processDatabse() {
 }
 
 func (n *UserNode) printDatabase() {
-	var debug string = n.GetName()+" database:\n"
+	var debug string = n.GetName() + " database:\n"
 
 	n.mu.Lock()
 
@@ -315,10 +312,10 @@ func (n *UserNode) printDatabase() {
 	for _, sensor := range sensorNames {
 		debug += sensor + "\n"
 		for _, r := range n.recentReadings[sensor] {
-			debug += "	" + r.ReadingID +  "  " + fmt.Sprintf("%.2f", r.Temperature) + " verifier:" + r.VerifierID + "\n"
+			debug += "	" + r.ReadingID + "  " + fmt.Sprintf("%.2f", r.Temperature) + " verifier:" + r.VerifierID + "\n"
 		}
-	} 
-	
+	}
+
 	// 2. Sort and print predictions
 	predictionSensorNames := make([]string, 0, len(n.recentPredictions))
 	for sensor := range n.recentPredictions {
@@ -328,42 +325,39 @@ func (n *UserNode) printDatabase() {
 
 	for _, sensor := range predictionSensorNames {
 		prediction := n.recentPredictions[sensor][len(n.recentPredictions[sensor])-1] // latest prediction
-		debug += "Latest prediction for "+sensor+": " + strconv.FormatFloat(float64(prediction), 'f', -1, 32) + "\n"
+		debug += "Latest prediction for " + sensor + ": " + strconv.FormatFloat(float64(prediction), 'f', -1, 32) + "\n"
 	}
-
 
 	n.mu.Unlock()
 	format.Display(format.Format_e(n.GetName(), "handleLockRelease()", debug))
 
 }
 
-
 // startWebServer initializes and starts the HTTP server for the web UI
 func (u *UserNode) startWebServer() {
 	mux := http.NewServeMux()
-	
+
 	// Serve the dashboard HTML page
 	mux.HandleFunc("/", u.handleDashboard)
-	
+
 	// API endpoint to get data in JSON format
 	mux.HandleFunc("/api/data", u.handleAPIData)
-	
+
 	// Serve static files if needed
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-	
+
 	u.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", u.port),
 		Handler: mux,
 	}
-	
-	format.Display(format.Format_d("node_user.go", "startWebServer()", 
+
+	format.Display(format.Format_d("node_user.go", "startWebServer()",
 		fmt.Sprintf("%s starting web server on port %d", u.GetName(), u.port)))
-	
+
 	if err := u.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("%s: Error starting web server: %v", u.GetName(), err)
 	}
 }
-
 
 // handleDashboard serves the HTML dashboard
 func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -738,38 +732,38 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
 func (u *UserNode) handleAPIData(w http.ResponseWriter, r *http.Request) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	
+
 	// Create a clean copy of readings to ensure proper JSON serialization
 	readingsCopy := make(map[string][]models.Reading)
 	for sensor, readings := range u.recentReadings {
 		readingsCopy[sensor] = make([]models.Reading, len(readings))
 		copy(readingsCopy[sensor], readings)
 	}
-	
+
 	// Create a clean copy of predictions
 	predictionsCopy := make(map[string][]float32)
 	for sensor, predictions := range u.recentPredictions {
 		predictionsCopy[sensor] = make([]float32, len(predictions))
 		copy(predictionsCopy[sensor], predictions)
 	}
-	
+
 	// Prepare data for JSON response
 	data := struct {
-		NodeName    string                    `json:"nodeName"`
+		NodeName    string                      `json:"nodeName"`
 		Readings    map[string][]models.Reading `json:"readings"`
-		Predictions map[string][]float32      `json:"predictions"`
-		Timestamp   int64                     `json:"timestamp"`
+		Predictions map[string][]float32        `json:"predictions"`
+		Timestamp   int64                       `json:"timestamp"`
 	}{
 		NodeName:    u.GetName(),
 		Readings:    readingsCopy,
 		Predictions: predictionsCopy,
 		Timestamp:   time.Now().Unix(),
 	}
-	
+
 	// Set response headers
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
-	
+
 	// Encode and send JSON response
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Printf("%s: Error encoding JSON: %v", u.GetName(), err)
@@ -778,7 +772,7 @@ func (u *UserNode) handleAPIData(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (n* UserNode) GetLocalState() string {
+func (n *UserNode) GetLocalState() string {
 	n.mu.Lock()
 	snap_content := ""
 	for senderID, readings := range n.recentReadings {

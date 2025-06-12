@@ -10,8 +10,8 @@ import (
 
 // Propagate a message to all other nodes
 func (c *ControlLayer) propagateMessage(msg string) {
-	propagate_msg := format.Replaceval(msg, "sender_name", c.GetName())
-	propagate_msg = format.Replaceval(msg, "sender_type", "control")
+	var propagate_msg string = format.Replaceval(msg, "sender_name", c.GetName())
+	propagate_msg = format.Replaceval(propagate_msg, "sender_type", "control")
 	c.SendMsg(propagate_msg)
 }
 
@@ -126,10 +126,9 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs ...bool) {
 
 }
 
-
 func (c *ControlLayer) SendMsgToNetwork(msg string) {
 	c.mu.Lock()
-	networkLayer := c.networkLayer 
+	networkLayer := c.networkLayer
 
 	msg = format.AddOrReplaceFieldToMessage(msg, "id", c.GenerateUniqueMessageID())
 	c.mu.Unlock()
@@ -161,7 +160,7 @@ func (c *ControlLayer) SawThatMessageBefore(msg string) bool {
 
 	// Never saw that message before
 	c.mu.Lock()
-	if c.IDWatcher.ContainsMID(sender_name, msg_NbMessageSent) == false {
+	if !c.IDWatcher.ContainsMID(sender_name, msg_NbMessageSent) {
 		c.IDWatcher.AddMIDToNode(sender_name, msg_NbMessageSent)
 		c.mu.Unlock()
 		return false
@@ -170,4 +169,3 @@ func (c *ControlLayer) SawThatMessageBefore(msg string) bool {
 	// Saw that message before as it is contained in intervals:
 	return true
 }
-

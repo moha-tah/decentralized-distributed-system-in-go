@@ -55,7 +55,7 @@ func (s *SensorNode) Start() error {
 			s.mu.Lock()
 			vectorClockReady := s.vectorClockReady
 			s.mu.Unlock()
-			if vectorClockReady == false {
+			if !vectorClockReady {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
@@ -159,7 +159,7 @@ func (s *SensorNode) logFullMessage(msg_id string, reading models.Reading) {
 		"/content_type=sensor_reading" +
 		"/content_value=" + strconv.FormatFloat(float64(reading.Temperature), 'f', -1, 32)
 	// "\n"
-	if s.vectorClockReady == true {
+	if s.vectorClockReady {
 		logLine = logLine + "/vector_clock=" + utils.SerializeVectorClock(s.vectorClock)
 	}
 
@@ -183,7 +183,7 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 
 		// 🔁 Mettre à jour le vector clock à la réception
 		s.mu.Lock()
-		if s.vectorClockReady == true {
+		if s.vectorClockReady {
 			if err == nil {
 				for i := 0; i < len(s.vectorClock); i++ {
 					s.vectorClock[i] = utils.Max(s.vectorClock[i], recvVC[i])
@@ -230,7 +230,7 @@ func (v *SensorNode) SendMessage(msg string, toHandleMessageArgs ...bool) {
 
 }
 
-func (n* SensorNode) GetLocalState() string {
+func (n *SensorNode) GetLocalState() string {
 	n.mu.Lock()
 	readings := make([]string, len(n.recentReadings))
 	for i, val := range n.recentReadings {
