@@ -289,7 +289,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		case "tree_red": // tree construction message (red messages from lecture)
 			c.processRedTree(msg)
 		case "new_node":
-			format.Display_d(c.GetName(), "HandleMsg()", "New node received: "+format.Findval(msg, "new_node"))
+			format.Display_d(c.GetName(), "HandleMsg()", "New node received has id "+format.Findval(msg, "new_node")+", and its app layer name is "+format.Findval(msg, "new_node_app_name"))
 			propagate_msg = false // Network layer handles propagation of this message
 			c.SendMsgToNetwork(format.Build_msg(
 				"sender_name", c.GetName(),
