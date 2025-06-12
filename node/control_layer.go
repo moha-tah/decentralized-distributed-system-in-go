@@ -291,7 +291,7 @@ func (c *ControlLayer) HandleMessage(msg string) error {
 		case "tree_red": // tree construction message (red messages from lecture)
 			c.processRedTree(msg)
 		case "new_node":
-			format.Display_g(c.GetName(), "HandleMessage()", "New node received: "+format.Findval(msg, "new_node")+". Resizing Vector Clocks.")
+			format.Display_g(c.GetName(), "HandleMessage()", "New node received has id "+format.Findval(msg, "new_node")+", and its app layer name is "+format.Findval(msg, "new_node_app_name"))
 
 			newPeersStr := format.Findval(msg, "known_peers")
 			// The network layer sends peer IDs, but the control layer works with full names.

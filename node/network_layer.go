@@ -178,6 +178,7 @@ func (n *NetworkLayer) startClient(peer_id_str string, wg *sync.WaitGroup) {
 				"type", "admission_request",
 				"destination", destination,
 				"requester", n.id,
+				"requester_app_name", n.controlLayer.child.GetName(),
 				"requested_connections", strings.Join(n.peers, utils.PearD_SITE_SEPARATOR),
 				"vector_clock", strconv.Itoa(n.counter))
 			n.SendMessage(msg, p_int)
@@ -468,6 +469,7 @@ func (n *NetworkLayer) handleAdmissionWaveDown(msg string, conn net.Conn) {
 				"type", "admission_wave_up",
 				"destination", senderID,
 				"requester", requesterName, // The node requesting admission
+				"requester_app_name", format.Findval(msg, "requester_app_name"), 
 				"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
 				"leader_id", strconv.Itoa(rcvLeaderId),
 			)
@@ -514,6 +516,7 @@ func (n *NetworkLayer) handleAdmissionWaveUp(msg string, conn net.Conn) {
 					"type", "admission_wave_up",
 					"destination", "network",
 					"requester", format.Findval(msg, "requester"), // The node requesting admission
+					"requester_app_name", format.Findval(msg, "requester_app_name"), 
 					"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
 					"leader_id", strconv.Itoa(electedLeader),
 				)
@@ -544,6 +547,7 @@ func (n *NetworkLayer) acceptAdmission(msg string, conn net.Conn) {
 		"type", "admission_granted",
 		"destination", "network",
 		"requester", requester, // The node requesting admission
+		"requester_app_name", format.Findval(msg, "requester_app_name"), 
 		"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
 		"known_peers", msg_content, // List of known peers
 	)
@@ -636,7 +640,6 @@ func (n *NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
 		}
 
 		n.knownPeersIDs = append(n.knownPeersIDs, format.Findval(msg, "requester"))
-		knownPeersIDs := n.knownPeersIDs
 
 		// Propagate admission_granted to other nodes except the requester and the node
 		// from with I am receiving the message.
@@ -647,6 +650,7 @@ func (n *NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
 					"destination", strconv.Itoa(nid),
 					"propagation", "true",
 					"requester", format.Findval(msg, "requester"),
+					"requester_app_name", format.Findval(msg, "requester_app_name"), 
 					"requested_connections", format.Findval(msg, "requested_connections"),
 					"known_peers", format.Findval(msg, "known_peers"),
 				)
@@ -654,12 +658,18 @@ func (n *NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
 			}
 		}
 
+		active_nids := []string{}
+		for _, nid := range n.activeNeighborsIDs {
+			active_nids = append(active_nids, strconv.Itoa(nid))
+		}
 		notif_msg := format.Build_msg(
 			"type", "new_node",
 			"destination", n.controlLayer.GetName(), // Send to control layer
 			"new_node", format.Findval(msg, "requester"), // The new node that has been admitted
+			"new_node_app_name", format.Findval(msg, "requester_app_name"), 
 			"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
-			"known_peers", strings.Join(knownPeersIDs, utils.PearD_SITE_SEPARATOR), // List of known peers
+			"known_peers", strings.Join(n.knownPeersIDs, utils.PearD_SITE_SEPARATOR), // List of known peers
+			"id_of_neighbors", strings.Join(active_nids, utils.PearD_SITE_SEPARATOR), // IDs of active neighbors
 		)
 		msgToSendAfterOperationsToControl = append(msgToSendAfterOperationsToControl, notif_msg)
 	}
