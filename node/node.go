@@ -1,6 +1,7 @@
 package node
 
 import (
+	"distributed_system/utils"
 	"strconv"
 	"sync"
 )
@@ -31,6 +32,12 @@ type Node interface {
 	// InitVectorClockWithSites initializes the vector clock with the given site names
 	InitVectorClockWithSites(siteNames []string)
 
+	// GetVectorClock returns a copy of the node's vector clock.
+	GetVectorClock() []int
+
+	// SetVectorClock updates the node's vector clock and related properties.
+	SetVectorClock(newVC []int, siteNames []string)
+
 	GetLocalState() string
 }
 
@@ -46,6 +53,7 @@ type BaseNode struct {
 	vectorClock      []int // taille = nombre total de noeuds
 	vectorClockReady bool  // true après pear_discovery_sealing
 	nodeIndex        int   // position de ce node dans le vecteur
+	channel_to_ctrl  chan string // channel to send messages to the control layer
 }
 
 // NewBaseNode creates a new base node with the given ID and type
@@ -59,6 +67,7 @@ func NewBaseNode(id, nodeType string) BaseNode {
 		clk:              0,
 		nodeIndex:        0,
 		vectorClockReady: false,
+		channel_to_ctrl:  make(chan string, 10), // Buffered channel for control messages
 	}
 }
 
@@ -85,8 +94,29 @@ func (n *BaseNode) GetName() string {
 // }
 
 func (n *BaseNode) SetControlLayer(c *ControlLayer) error {
+	n.mu.Lock()
 	n.ctrlLayer = c
+	n.mu.Unlock()
+	go n.ctrlLayer.HandleMessage(n.channel_to_ctrl)
 	return nil
+}
+
+func (n *BaseNode) GetVectorClock() []int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	// Return a copy to prevent race conditions
+	vcCopy := make([]int, len(n.vectorClock))
+	copy(vcCopy, n.vectorClock)
+	return vcCopy
+}
+
+func (n *BaseNode) SetVectorClock(newVC []int, siteNames []string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.vectorClock = newVC
+	// Use the control layer's name to find the index, as this is what is in siteNames
+	n.nodeIndex = utils.FindIndex(n.ctrlLayer.GetName(), siteNames)
+	n.vectorClockReady = true
 }
 
 func (n *BaseNode) GenerateUniqueMessageID() string {

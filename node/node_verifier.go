@@ -304,7 +304,8 @@ func (v *VerifierNode) SendMessage(msg string, toHandleMessageArgs ...bool) {
 	msg = format.Replaceval(msg, "id", v.GenerateUniqueMessageID())
 
 	if toHandleMessage {
-		v.ctrlLayer.HandleMessage(msg)
+		// v.ctrlLayer.HandleMessage(msg)
+		v.channel_to_ctrl <- msg
 	} else {
 		v.ctrlLayer.SendApplicationMsg(msg)
 	}
