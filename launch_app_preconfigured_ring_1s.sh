@@ -4,20 +4,23 @@ declare -a PIDS=()
 
 go build -o main main.go
 
+sleeping_time=2
+
 ./main verifier 1 &
 PIDS+=($!)
-sleep 1
+sleep $sleeping_time
 
 ./main user_exp 2 1 &
 PIDS+=($!)
-sleep 1
+sleep $sleeping_time
 
 ./main user_linear 3 1 2 & 
 PIDS+=($!)
-sleep 1
+sleep $sleeping_time
 
 ./main sensor 4 3 1 & 
 PIDS+=($!)
+sleep $sleeping_time
 
 ./main verifier 5 1 4  &
 PIDS+=($!)
