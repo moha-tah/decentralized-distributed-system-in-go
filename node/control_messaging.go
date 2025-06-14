@@ -133,7 +133,7 @@ func (c *ControlLayer) SendMsgToNetwork(msg string) {
 	msg = format.AddOrReplaceFieldToMessage(msg, "id", c.GenerateUniqueMessageID())
 	c.mu.Unlock()
 
-	networkLayer.MessageFromControlLayer(msg)
+	go networkLayer.MessageFromControlLayer(msg)
 
 	c.mu.Lock()
 	c.nbMsgSent = c.nbMsgSent + 1

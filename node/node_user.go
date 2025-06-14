@@ -86,10 +86,10 @@ func (u *UserNode) HandleMessage(channel chan string) {
 		rec_clk, _ := strconv.Atoi(rec_clk_str)
 		u.clk = utils.Synchronise(u.clk, rec_clk)
 		clk_int := u.clk
-		// if u.vectorClockReady == true {
-		recVC := format.RetrieveVectorClock(msg, len(u.vectorClock))
-		u.vectorClock = utils.SynchroniseVectorClock(u.vectorClock, recVC, u.nodeIndex)
-		// }
+		if u.vectorClockReady {
+			recVC := format.RetrieveVectorClock(msg, len(u.vectorClock))
+			u.vectorClock = utils.SynchroniseVectorClock(u.vectorClock, recVC, u.nodeIndex)
+		}
 		u.mu.Unlock()
 
 		var msg_type string = format.Findval(msg, "type")
@@ -201,7 +201,8 @@ func (v *UserNode) SendMessage(msg string, toHandleMessageArgs ...bool) {
 	msg = format.Replaceval(msg, "id", v.GenerateUniqueMessageID())
 
 	if toHandleMessage {
-		v.ctrlLayer.HandleMessage(msg)
+		// v.ctrlLayer.HandleMessage(msg)
+		v.channel_to_ctrl <- msg
 	} else {
 		v.ctrlLayer.SendApplicationMsg(msg)
 	}

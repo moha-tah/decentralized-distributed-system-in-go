@@ -4,7 +4,7 @@ declare -a PIDS=()
 
 go build -o main main.go
 
-./main verifier 1 &
+./main user_exp 1 &
 PIDS+=($!)
 
 ./main user_exp 2 1 &
@@ -13,10 +13,10 @@ PIDS+=($!)
 ./main user_linear 3 1 2 & 
 PIDS+=($!)
 
-./main sensor 4 3 1 & 
+./main user_exp 4 3 1 & 
 PIDS+=($!)
 
-./main verifier 5 1 4  &
+./main sensor 5 1 4  &
 PIDS+=($!)
 
 ./main sensor 6 3 2 &

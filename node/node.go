@@ -53,6 +53,7 @@ type BaseNode struct {
 	vectorClock      []int // taille = nombre total de noeuds
 	vectorClockReady bool  // true après pear_discovery_sealing
 	nodeIndex        int   // position de ce node dans le vecteur
+	channel_to_ctrl  chan string // channel to send messages to the control layer
 }
 
 // NewBaseNode creates a new base node with the given ID and type
@@ -66,6 +67,7 @@ func NewBaseNode(id, nodeType string) BaseNode {
 		clk:              0,
 		nodeIndex:        0,
 		vectorClockReady: false,
+		channel_to_ctrl:  make(chan string, 10), // Buffered channel for control messages
 	}
 }
 
@@ -92,7 +94,10 @@ func (n *BaseNode) GetName() string {
 // }
 
 func (n *BaseNode) SetControlLayer(c *ControlLayer) error {
+	n.mu.Lock()
 	n.ctrlLayer = c
+	n.mu.Unlock()
+	go n.ctrlLayer.HandleMessage(n.channel_to_ctrl)
 	return nil
 }
 
