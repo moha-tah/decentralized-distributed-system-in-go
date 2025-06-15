@@ -1,8 +1,8 @@
 package format
 
 import (
-	"distributed_system/utils"
 	"distributed_system/consts"
+	"distributed_system/utils"
 	"fmt"
 	"log"
 	"sort"
@@ -84,13 +84,14 @@ func Msg_format(key string, val string) string {
 	return fieldsep + keyvalsep + key + keyvalsep + val
 }
 
-
 // Build_msg_args(key1, value1, key2, value2, ...) aims to create a string structure as :
-//  map[string]string{
-//	    "user": "alice",
-//	    "id":   "1234",
-//	    "role": "admin",
-// }
+//
+//	 map[string]string{
+//		    "user": "alice",
+//		    "id":   "1234",
+//		    "role": "admin",
+//	}
+//
 // by calling Build_msg_args("user", "alice", "id", "1234",...)
 // This can then be passed to Msg_format_multi
 func Build_msg_args(args ...string) map[string]string {
@@ -116,11 +117,12 @@ func Build_msg_args(args ...string) map[string]string {
 	return data
 }
 
-// Msg_format_multi formats a message using multiple keys and multiple 
+// Msg_format_multi formats a message using multiple keys and multiple
 // values (1 key - 1 value). Message is sorted alphabetically by keys
 // Usage :
-// 	data:= format.Build_msg_args("sender_name", *sensor_name, "clk2", strconv.Itoa(clk))
-// 	formatted := Msg_format_multi(data)
+//
+//	data:= format.Build_msg_args("sender_name", *sensor_name, "clk2", strconv.Itoa(clk))
+//	formatted := Msg_format_multi(data)
 func Msg_format_multi(kvPairs map[string]string) string {
 	result := ""
 	keys := make([]string, 0, len(kvPairs))
@@ -138,19 +140,18 @@ func Msg_format_multi(kvPairs map[string]string) string {
 	return result
 }
 
-
 func RetrieveVectorClock(msg string, length_to_compare int) []int {
 	recVC_str := Findval(msg, "vector_clock")
 	recVC, err := utils.DeserializeVectorClock(recVC_str)
 	if err != nil {
-		stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock deserialization: " + err.Error()))
+		stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock deserialization: "+err.Error()))
 		return nil
 	}
 	if len(recVC) != length_to_compare {
-		stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock length: "+strconv.Itoa(len(recVC_str)) + "vs "+strconv.Itoa(length_to_compare)))
+		stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock length: "+strconv.Itoa(len(recVC_str))+"vs "+strconv.Itoa(length_to_compare)))
 		return nil
 	}
-	return recVC 
+	return recVC
 }
 
 func Build_msg(args ...string) string {

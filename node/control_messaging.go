@@ -51,6 +51,7 @@ func (c *ControlLayer) SendControlMsg(msg_content string, msg_content_type strin
 	msg_type string, destination string, fixed_id string,
 	sender_name_source string) error {
 	var msg_id string
+
 	if fixed_id == "" {
 		msg_id = c.GenerateUniqueMessageID()
 	} else {

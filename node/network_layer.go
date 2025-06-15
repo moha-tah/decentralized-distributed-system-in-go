@@ -177,6 +177,7 @@ func (n *NetworkLayer) startClient(peer_id_str string, wg *sync.WaitGroup) {
 		for _, p := range n.peers {
 			p_int, _ := strconv.Atoi(p)
 			destination := strconv.Itoa(p_int + 9000)
+
 			msg := format.Build_msg(
 				"type", "admission_request",
 				"destination", destination,
@@ -577,7 +578,6 @@ func (n *NetworkLayer) acceptAdmission(msg string, conn net.Conn) {
 // 1. For the requesting node, it means it has been admitted and can start its activity.
 // 2. For the node connected to the requesting node, it means it can now accept the new node
 func (n *NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
-
 	senderID_int, _ := strconv.Atoi(format.Findval(msg, "sender_id"))
 
 	msgToSendAfterOperations := map[int]string{}
@@ -700,15 +700,15 @@ func (n *NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
 	format.Display_network(n.GetName(), "handleAdmissionGranted()", "Known peers: "+strings.Join(n.knownPeersIDs, ", "))
 
 	// --------- debug -----------
-	active_nids := ""
-	for _, nid := range n.activeNeighborsIDs {
-		active_nids += strconv.Itoa(nid) + ", "
+	active_nIds := ""
+	for _, nId := range n.activeNeighborsIDs {
+		active_nIds += strconv.Itoa(nId) + ", "
 	}
-	format.Display_network(n.GetName(), "handleAdmissionGranted()", "Active neighbors: "+active_nids)
+	format.Display_network(n.GetName(), "handleAdmissionGranted()", "Active neighbors: "+active_nIds)
 	// ----------------------------
 
-	for nid, msgToSend := range msgToSendAfterOperations {
-		n.SendMessage(msgToSend, nid)
+	for nId, msgToSend := range msgToSendAfterOperations {
+		n.SendMessage(msgToSend, nId)
 	}
 	for _, msgToSend := range msgToSendAfterOperationsToControl {
 		n.SendMessage(msgToSend, -1, true) // Send to control layer

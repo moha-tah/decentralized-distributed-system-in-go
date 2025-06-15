@@ -1,8 +1,12 @@
 package node
 
 import (
+	"bytes"
 	"distributed_system/format"
+	"distributed_system/models"
 	"distributed_system/utils"
+	"encoding/base64"
+	"encoding/gob"
 	"slices"
 	"strconv"
 	"strings"
@@ -290,7 +294,66 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				c.child.SetVectorClock(newChildVC, newPeerNames)
 
 				format.Display_g(c.GetName(), "HandleMessage()", "Vector clocks resized to size "+strconv.Itoa(len(newPeerNames)))
+
+				// Now that the node is configured, request the state from a neighbor
+				var neighborToAsk string
+				for _, name := range newPeerNames {
+					if name != c.GetName() {
+						neighborToAsk = name
+						break
+					}
+				}
+				if neighborToAsk != "" {
+					format.Display_g(c.GetName(), "HandleMessage()", "Requesting application state from neighbor "+neighborToAsk)
+					c.SendControlMsg("", "empty", "state_request", neighborToAsk, "", c.GetName())
+				}
+
 				propagate_msg = false
+
+			case "state_request":
+				// A neighbor is requesting our state.
+				format.Display_g(c.GetName(), "HandleMessage()", "Received state request from "+sender_name_source)
+				appState := c.child.GetApplicationState()
+
+				// Serialize the state using gob
+				var buffer bytes.Buffer
+				encoder := gob.NewEncoder(&buffer)
+				if err := encoder.Encode(appState); err != nil {
+					format.Display_e(c.GetName(), "HandleMessage", "Failed to encode application state: "+err.Error())
+					return
+				}
+				// Encode the gob binary data into a text-safe base64 string
+				stateStr := base64.StdEncoding.EncodeToString(buffer.Bytes())
+
+				// Replace forward slashes with "REPLACE_BY_SLASH" in the state string to avoid issues with the message separator
+				stateStr = strings.ReplaceAll(stateStr, "/", "REPLACE_BY_SLASH")
+
+				c.SendControlMsg(stateStr, "recent_readings_state", "state_response", sender_name_source, "", c.GetName())
+
+			case "state_response":
+				format.Display_g(c.GetName(), "HandleMessage()", "Received state response from "+sender_name_source)
+				stateStr := format.Findval(msg, "content_value")
+
+				// Replace "REPLACE_BY_SLASH" with forward slashes in the state string
+				stateStr = strings.ReplaceAll(stateStr, "REPLACE_BY_SLASH", "/")
+
+				// Decode the base64 string back to gob binary data
+				stateBytes, err := base64.StdEncoding.DecodeString(stateStr)
+				if err != nil {
+					format.Display_e(c.GetName(), "HandleMessage", "Failed to decode base64 state: "+err.Error())
+					return
+				}
+
+				buffer := bytes.NewBuffer(stateBytes)
+				decoder := gob.NewDecoder(buffer)
+				var receivedState map[string][]models.Reading
+				if err := decoder.Decode(&receivedState); err != nil {
+					format.Display_e(c.GetName(), "HandleMessage", "Failed to decode application state: "+err.Error())
+					return
+				}
+
+				// Set the application state on the child node
+				c.child.SetApplicationState(receivedState)
 			}
 
 		} else if msg_destination == "verifiers" {
