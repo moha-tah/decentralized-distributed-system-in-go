@@ -320,20 +320,19 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 			case "state_request":
 				// A neighbor is requesting our state.
 				format.Display_g(c.GetName(), "HandleMessage()", "Received state request from "+sender_name_source)
-				appState := c.child.GetApplicationState()
 
-				// Serialize the state using gob
+				// The new node is requesting our current state
+				// We send it back our recent readings
 				var buffer bytes.Buffer
-				encoder := gob.NewEncoder(&buffer)
-				if err := encoder.Encode(appState); err != nil {
-					format.Display_e(c.GetName(), "HandleMessage", "Failed to encode application state: "+err.Error())
+				enc := gob.NewEncoder(&buffer)
+				err := enc.Encode(c.child.GetApplicationState())
+				if err != nil {
+					format.Display_e(c.GetName(), "HandleMessage", "Failed to encode state: "+err.Error())
 					return
 				}
-				// Encode the gob binary data into a text-safe base64 string
-				stateStr := base64.StdEncoding.EncodeToString(buffer.Bytes())
 
-				// Replace forward slashes with "REPLACE_BY_SLASH" in the state string to avoid issues with the message separator
-				stateStr = strings.ReplaceAll(stateStr, "/", "REPLACE_BY_SLASH")
+				// Encode the gob binary data into a text-safe base64 string
+				stateStr := base64.RawURLEncoding.EncodeToString(buffer.Bytes())
 
 				c.SendControlMsg(stateStr, "recent_readings_state", "state_response", sender_name_source, "", c.GetName())
 
@@ -341,13 +340,11 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				format.Display_g(c.GetName(), "HandleMessage()", "Received state response from "+sender_name_source)
 				stateStr := format.Findval(msg, "content_value")
 
-				// Replace "REPLACE_BY_SLASH" with forward slashes in the state string
-				stateStr = strings.ReplaceAll(stateStr, "REPLACE_BY_SLASH", "/")
-
 				// Decode the base64 string back to gob binary data
-				stateBytes, err := base64.StdEncoding.DecodeString(stateStr)
+				stateBytes, err := base64.RawURLEncoding.DecodeString(stateStr)
 				if err != nil {
 					format.Display_e(c.GetName(), "HandleMessage", "Failed to decode base64 state: "+err.Error())
+					format.Display_e(c.GetName(), "HandleMessage", "State: "+stateStr+"; length: "+strconv.Itoa(len(stateStr)))
 					return
 				}
 
