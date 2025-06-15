@@ -314,6 +314,7 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 	for scanner.Scan() {
 		msg := scanner.Text()
 		if n.SawThatMessageBefore(msg) {
+			format.Display_network(n.GetName(), "handleConnection()", fmt.Sprintf("Ignoring duplicate message ID %s from %s", format.Findval(msg, "id"), format.Findval(msg, "sender_name_source")))
 			break
 		}
 
@@ -338,6 +339,9 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 			n.handleAdmissionWaveDown(msg, conn)
 		} else if msg_type == "admission_wave_up" {
 			n.handleAdmissionWaveUp(msg, conn)
+		} else if msg_type == "snapshot" {
+			n.AskSnapshotControlAndPropagateSnapshotRequest(msg, peer_id_str)
+			canPropagateMessage = false // Propagation handled in AskSnapshotControlAndPropagateSnapshotRequest
 		} else {
 			msg_destination_id, _ := strconv.Atoi(format.Findval(msg, "destination"))
 			if msg_destination_id != -1 && strconv.Itoa(msg_destination_id) == n.id {
@@ -367,10 +371,16 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 // This function is called by the control layer to send a message to the network layer.
 // Nothing is done yet (only prints).
 func (n *NetworkLayer) MessageFromControlLayer(msg string) {
+	idToAvoid := "-1"
+	if format.Findval(msg, "type") == "snapshot" {
+		idToAvoid = strconv.Itoa(n.activeNeighborsIDs[0])
+	}
 	format.Display_network(n.GetName(), "MessageFromControlLayer()", "Propagating message of control layer to all active connections.")
 	msg = format.AddOrReplaceFieldToMessage(msg, "sender_name_source", n.controlLayer.GetName())
 	msg = format.AddOrReplaceFieldToMessage(msg, "propagation", "true") // Set propagation to true
-	n.propagateMessage(msg, "-1")
+	n.mu.Lock()
+	n.propagateMessage(msg, idToAvoid)
+	n.mu.Unlock()
 }
 
 // ============================= ADMISSION HANDLING FUNCTIONS ============================
@@ -747,7 +757,7 @@ func (n *NetworkLayer) SawThatMessageBefore(msg string) bool {
 func (n *NetworkLayer) AddNewMessageId(sender_name string, MID_str string) {
 	msg_NbMessageSent, err := format.MIDFromString(MID_str)
 	if err != nil {
-		format.Display(format.Format_e("AddNewMessageID()", n.GetName(), "Error in message id: "+err.Error()))
+		format.Display_e("AddNewMessageID()", n.GetName(), "Error in message id: "+err.Error())
 	}
 
 	n.IDWatcher.AddMIDToNode(sender_name, msg_NbMessageSent)

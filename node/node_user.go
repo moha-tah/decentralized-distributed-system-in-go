@@ -344,6 +344,9 @@ func (u *UserNode) startWebServer() {
 	// API endpoint to get data in JSON format
 	mux.HandleFunc("/api/data", u.handleAPIData)
 
+	// API endpoint to take a snapshot
+	mux.HandleFunc("/api/snapshot", u.handleSnapshot)
+
 	// Serve static files if needed
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
@@ -359,6 +362,21 @@ func (u *UserNode) startWebServer() {
 		log.Printf("%s: Error starting web server: %v", u.GetName(), err)
 	}
 }
+
+func (u *UserNode) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	return
+	}
+
+	// format.Display_w(u.GetName(), "handleSnapshot()", "Taking snapshot...")
+	u.ctrlLayer.RequestSnapshot()
+
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Snapshot taken successfully"))
+}
+
 
 // handleDashboard serves the HTML dashboard
 func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -484,6 +502,7 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
     <div class="container">
         <h1>` + u.GetName() + ` (` + u.model + `) Dashboard</h1>
         <button class="refresh-button" onclick="fetchData()">Refresh Data</button>
+        <button class="refresh-button" onclick="takeSnapshot()">📷 Take snapshot</button>
         <div id="last-updated" class="timestamp"></div>
 	<div class="chart-container">
 	    <h2>Recent Predictions</h2>
@@ -645,6 +664,21 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
                     console.error('Error fetching data:', error);
                 });
         }
+	function takeSnapshot() {
+	    fetch('/api/snapshot', { method: 'POST' })
+		.then(response => {
+		    if (!response.ok) throw new Error('Snapshot failed');
+		    return response.text();
+		})
+		.then(msg => {
+		    alert(msg); // optional success feedback
+		})
+		.catch(error => {
+		    console.error('Snapshot error:', error);
+		    alert('Failed to take snapshot');
+		});
+	}
+
 
         // Update the UI with the fetched data
         function updateUI(data) {

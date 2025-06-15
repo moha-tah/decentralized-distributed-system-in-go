@@ -33,173 +33,79 @@ type GlobalSnapshot struct {
 var snap_fieldsep = consts.Snap_fieldsep
 var snap_keyvalsep = consts.Snap_keyvalsep
 
-// var snap_bfmssage_fieldsep = consts.Snap_bfmssage_fieldsep
-// var snap_bfmssage_keyvalsep = consts.Fieldsep
 
-// handleSnapshotMsg handles snapshot messages and takes appropriate actions.
-// It checks if the message is a snapshot request, marker, or response and processes it accordingly.
-// It also checks if the message is a normal message and updates the buffered messages if needed.
-// It returns true if the message should be processed further in HandleMessage() (not a snapshot message).
-// Overall logic:
-// - If a snapshot request is received, take a snapshot and propagate it.
-// - If a snapshot marker is received, take a snapshot if not already taken and propagate it.
-// - If a snapshot response is received, update the local state and send a response to the parent node.
-// - If a normal message is received, check if it is buffered and update the buffered messages accordingly.
-// ⚠️ FIFO hypothesis.
-func (c *ControlLayer) handleSnapshotMsg(msg string) bool {
+func (n* NetworkLayer) AskSnapshotControlAndPropagateSnapshotRequest(msg string, msg_received_from_id string) {
+	// Ask the control layer to take a snapshot 
+	next_message := n.controlLayer.TakeSnapshotAndPrepareMessage(msg)
+	if next_message != "" { // is "" if the our control layer is the initiator
+		for _, neighbor := range n.activeNeighborsIDs {
+			if strconv.Itoa(neighbor) != msg_received_from_id { // Don't send it back to the sender
+				n.SendMessage(next_message, neighbor)
+				return
+			}
+		}
+	}
+}
+
+// ⚠️ FIFO hypothesis
+func (c *ControlLayer) TakeSnapshotAndPrepareMessage(msg string) string{
 	msg_type := format.Findval(msg, "type")
-	initiator := format.Findval(msg, "sender_name_source")
-	sender_name := format.Findval(msg, "sender_name")
+	initiator := format.Findval(msg, "snapshot_initiator")
+	format.Display_g("TakeSnapshotAndPrepareMessage()", c.GetName(), "Received snapshot request from "+initiator+" my ID is "+c.id)
 
 	snapshot_id, snap_err := strconv.Atoi(format.Findval(msg, "snapshot_id"))
 	if snap_err != nil {
-		return true // If snapshot_id is not present or invalid, we assume it is a normal message
+		format.Display_e("handleSnapshotMsg()", c.GetName(), "Error parsing snapshot_id: "+snap_err.Error())
 	}
-
-	// Useful variable for later: Do we already have a snapshot for this id?
-	c.mu.Lock()
-	snapshot_taken := c.subTreeState.SnapshotId == strconv.Itoa(snapshot_id)
-	if c.subTreeState.SnapshotId == "" {
-		snapshot_taken = false
-	}
-	c.mu.Unlock()
-
-	// Used in HandleMessage() to check if message needs to be processed (true if it is not a snapshot message)
-	processMessage := false
 
 	//⚠️ FIFO hypothesis: if a node receives a snapshot request, it has already
 	// received a marker before from the same node.
-	if msg_type == "snapshot_request" {
-		if !snapshot_taken {
-			c.takeSnapshotAndPropagate(snapshot_id, initiator)
-		}
-	} else if msg_type == "snapshot_marker" {
-		if !snapshot_taken {
-			c.takeSnapshotAndPropagate(snapshot_id, initiator)
-			c.mu.Lock()
-			c.markersReceivedFrom[snapshot_id] = append(c.markersReceivedFrom[snapshot_id], sender_name)
-			c.mu.Unlock()
-		} else {
-			c.mu.Lock()
-			already_marked := false
-			for marked_snap_id := range c.markersReceivedFrom {
-				if snapshot_id == marked_snap_id {
-					already_marked = true
-					break
-				}
-			}
-			if !already_marked {
-				c.markersReceivedFrom[snapshot_id] = append(c.markersReceivedFrom[snapshot_id], sender_name)
-			}
-			c.mu.Unlock()
-		}
-
-		c.mu.Lock()
-		markersReceivedFrom_snapid := c.markersReceivedFrom[snapshot_id]
-		directNeighbors := c.directNeighbors
-		childrenNames := c.childrenNames
-		c.mu.Unlock()
-		if len(markersReceivedFrom_snapid) == len(directNeighbors) || len(childrenNames) == 0 {
-			if !c.snapResponseSent {
-				c.sendSnapshotResponse()
-			}
-		}
-	} else if msg_type == "snapshot_response" {
+	if msg_type == "snapshot" {
 		state_str := format.Findval(msg, "content_value")
 		state := DeserializeGlobalSnapshot(state_str)
-		c.mu.Lock() // Update the SubTreeState with the received state
-		subTreeState := c.subTreeState
-		// no need to sync vclk, as it will be sync before sending snap data to parent:
-		// subTreeState.VectorClock = utils.SynchroniseVectorClock(c.vectorClock, state.VectorClock, c.nodeIndex)
-		subTreeState.Data = append(subTreeState.Data, state.Data...)
-		c.nbSnapResponsePending -= 1
-		c.subTreeState = subTreeState
-		nbSnapResponses := c.nbSnapResponsePending
-		c.mu.Unlock()
-		// Send to parent when all children have sent their response
-		if nbSnapResponses == 0 {
-			c.sendSnapshotResponse()
-		}
-	} else {
-		// Normal message, buffer it if snapshot is taken
-		if snapshot_taken {
-			markedThisNode := false
-			for marked_snap_id := range c.markersReceivedFrom {
-				if snapshot_id == marked_snap_id {
-					markedThisNode = true
-					break
-				}
+
+		if c.id == format.Findval(msg, "snapshot_initiator_id") {
+			format.Display_g("handleSnapshotMsg()", c.GetName(), "Initiator received its own snapshot request")
+			snapshots := make(map[string]SnapshotData)
+			for _, state_data := range state.Data {
+				snapshots[state_data.NodeName] = state_data
 			}
-			if !markedThisNode {
-				c.mu.Lock()
-				// First data is current node's state.
-				// It does exist as we took the snapshot (snapshot_taken == true)
-				state := c.subTreeState.Data[0]
-				state.BufferedMsg = append(state.BufferedMsg, msg)
-				c.subTreeState.Data[0] = state
-				c.mu.Unlock()
-			}
+			c.SaveSnapshotToCSVThreadSafe(snapshots, format.Findval(msg, "snapshot_id"))
+		} else {
+			snap_data := c.takeSnapshot(snapshot_id, initiator)
+
+			c.mu.Lock() // Update the SubTreeState with the received state
+			subTreeState := c.subTreeState
+			subTreeState.Data = []SnapshotData{snap_data}
+			subTreeState.Data = append(subTreeState.Data, state.Data...)
+			c.subTreeState = subTreeState
+			c.mu.Unlock()
+
+			response := format.Msg_format_multi(format.Build_msg_args(
+				"id", c.GenerateUniqueMessageID(),
+				"type", "snapshot",
+				"sender_name", c.GetName(),
+				"sender_name_source", c.GetName(),
+				"sender_type", "control",
+				"content_type", "snapshot_data",
+				"content_value", SerializeGlobalSnapshot(c.subTreeState),
+				"snapshot_initiator", initiator,
+				"snapshot_initiator_id", format.Findval(msg, "snapshot_initiator_id"),
+				"snapshot_id", strconv.Itoa(snapshot_id),
+				"propagation", "true",
+				))
+			c.mu.Lock()
+			c.nbMsgSent++
+			c.mu.Unlock()
+			// c.SendMsgToNetwork(response) // Let network layer handle the snapshot propagation.
+			return response
 		}
-		processMessage = true
-	}
-	return processMessage
+			
+	}  
+	return ""
 }
 
-// sendSnapshotResponse sends the snapshot response to the parent node
-func (c *ControlLayer) sendSnapshotResponse() {
-	// If current node is the root => snapshot algorithm is finished
-	if c.parentNodeName == c.GetName() {
-		c.mu.Lock()
-		format.Display(format.Format_g(c.GetName(), "SendSnap()", "✅✅✅ Snapshot algorithm finished for snapshot id "+c.subTreeState.SnapshotId))
-		// AJOUT : Sauvegarde la snapshot dans un CSV
-		snapshots := make(map[string]SnapshotData)
-		for _, childState := range c.subTreeState.Data {
-			snapshots[childState.NodeName] = childState
-		}
-		c.mu.Unlock()
-		c.SaveSnapshotToCSVThreadSafe(snapshots)
-		c.CheckConsistency()
-
-		return
-	}
-
-	c.mu.Lock()
-	snapshot_id := c.nodeMarker
-	parentNodeName := c.parentNodeName
-
-	// orig := c.vectorClock
-	// copyOfVC := make([]int, len(orig))
-	// copy(copyOfVC, orig)
-	// c.subTreeState.Data[0].VectorClock = copyOfVC
-	// c.subTreeState.Data[0].VectorClock[c.nodeIndex] += 1 // As response will be sent = sending action = +1
-	//
-	// orig = c.vectorClock
-	// copyOfVC = make([]int, len(orig))
-	// copy(copyOfVC, orig)
-	// c.subTreeState.VectorClock = copyOfVC
-	// c.subTreeState.VectorClock[c.nodeIndex] += 1 // As response will be sent = sending action = +1
-
-	snap_content := SerializeGlobalSnapshot(c.subTreeState)
-	c.snapResponseSent = true
-	c.mu.Unlock()
-
-	response := format.Msg_format_multi(format.Build_msg_args(
-		"id", c.GenerateUniqueMessageID(),
-		"type", "snapshot_response",
-		"sender_name", c.GetName(),
-		"sender_name_source", c.GetName(),
-		"sender_type", "control",
-		"destination", parentNodeName,
-		"content_type", "snapshot_data",
-		"content_value", snap_content,
-		"snapshot_id", strconv.Itoa(snapshot_id),
-		"clk", "", // changed in SendMsg
-		"vector_clock", "", // changed in SendMsg
-	))
-	c.SendMsg(response)
-}
-
-func (c *ControlLayer) takeSnapshotAndPropagate(snapshot_id int, initiator string) {
+func (c *ControlLayer) takeSnapshot(snapshot_id int, initiator string) SnapshotData {
 	c.mu.Lock()
 	c.snapResponseSent = false
 	c.nbSnapResponsePending = len(c.childrenNames)
@@ -230,30 +136,8 @@ func (c *ControlLayer) takeSnapshotAndPropagate(snapshot_id int, initiator strin
 	c.markersReceivedFrom[c.nodeMarker] = append(c.markersReceivedFrom[c.nodeMarker], c.GetName())
 	c.nodeMarker = snapshot_id
 
-	directNeighbors := c.directNeighbors
-	childrenNames := c.childrenNames
 	c.mu.Unlock()
-
-	propagate_marker := format.Msg_format_multi(format.Build_msg_args(
-		"id", c.GenerateUniqueMessageID(),
-		"type", "snapshot_marker",
-		"sender_name", c.GetName(),
-		"sender_name_source", initiator,
-		"sender_type", "control",
-		"destination", "",
-		"clk", "", // Is done in c.SendMsg
-		"vector_clock", "", // Is done in c.SendMsg
-		"content_type", "request_type",
-		"propagation", "false",
-	))
-	for _, neighbor := range directNeighbors {
-		c.SendMsg(format.Replaceval(propagate_marker, "destination", neighbor))
-	}
-
-	propagate_snapshot_rq := format.Replaceval(propagate_marker, "type", "snapshot_request")
-	for _, child := range childrenNames {
-		c.SendMsg(format.Replaceval(propagate_snapshot_rq, "destination", child))
-	}
+	return state
 }
 
 // RequestSnapshot sends a snapshot request to all neighbors.
@@ -265,25 +149,36 @@ func (c *ControlLayer) RequestSnapshot() {
 	snapshot_id := c.nodeMarker + 1
 	c.mu.Unlock()
 
-	c.takeSnapshotAndPropagate(snapshot_id, c.GetName())
+	snap_data := c.takeSnapshot(snapshot_id, c.GetName())
+
+	global_snapshot := GlobalSnapshot{
+		SnapshotId:  strconv.Itoa(snapshot_id),
+		VectorClock: c.vectorClock,
+		Initiator:   c.GetName(),
+		Data:        []SnapshotData{snap_data},
+	}
 
 	msgID := c.GenerateUniqueMessageID()
 	msg := format.Msg_format_multi(format.Build_msg_args(
 		"id", msgID,
-		"type", "snapshot_request",
+		"type", "snapshot",
 		"sender_name", c.GetName(),
 		"sender_name_source", c.GetName(),
 		"sender_type", "control",
-		"destination", "",
-		"clk", "", // Is done in c.SendMsg
-		"vector_clock", "", // Is done in c.SendMsg
-		"content_type", "request_type",
-		"content_value", "snapshot_start",
+		"content_type", "snapshot_data",
+		"content_value", SerializeGlobalSnapshot(global_snapshot),
+		"propagation", "true",
+		"snapshot_initiator", c.GetName(),
+		"snapshot_initiator_id", c.id,
 		"snapshot_id", strconv.Itoa(snapshot_id),
 	))
-	for _, neighbor := range c.directNeighbors {
-		c.SendMsg(format.Replaceval(msg, "destination", neighbor))
-	}
+	c.mu.Lock()
+	c.nbMsgSent++
+	c.mu.Unlock()
+	c.SendMsgToNetwork(msg) // Let network layer handle the request.
+	// for _, neighbor := range c.directNeighbors {
+	// 	c.SendMsg(format.Replaceval(msg, "destination", neighbor))
+	// }
 }
 
 // Converts SnapshotData struct to string format using custom delimiters.
@@ -488,10 +383,20 @@ func (c *ControlLayer) CheckConsistency() bool {
 	return consistent
 }
 
-func (c *ControlLayer) SaveSnapshotToCSVThreadSafe(snapshots map[string]SnapshotData) {
-	file, err := os.Create("snapshot.csv")
+func (c *ControlLayer) SaveSnapshotToCSVThreadSafe(snapshots map[string]SnapshotData, snapshotId string) {
+	var file *os.File
+	var err error
+
+	if snapshotId == "0" {
+		// Overwrite the file
+		file, err = os.Create("snapshot.csv")
+	} else {
+		// Append to the file
+		file, err = os.OpenFile("snapshot.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	}
+	
 	if err != nil {
-		log.Println("Erreur création fichier snapshot:", err)
+		log.Println("Erreur ouverture fichier snapshot:", err)
 		return
 	}
 	defer file.Close()
@@ -499,14 +404,17 @@ func (c *ControlLayer) SaveSnapshotToCSVThreadSafe(snapshots map[string]Snapshot
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	// En-tête détaillé
-	writer.Write([]string{
-		"NodeName",
-		"Initiator",
-		"VectorClock",
-		"Content",
-		"BufferedMessages",
-	})
+	if snapshotId == "0" {
+		// En-tête détaillé
+		writer.Write([]string{
+			"Snapshot ID",
+			"NodeName",
+			"Initiator",
+			"VectorClock",
+			"Content",
+			"BufferedMessages",
+		})
+	}
 
 	for _, snap := range snapshots {
 		// Concatène les messages bufferisés en une seule chaîne
@@ -515,6 +423,7 @@ func (c *ControlLayer) SaveSnapshotToCSVThreadSafe(snapshots map[string]Snapshot
 			buffered = strings.Join(snap.BufferedMsg, " || ")
 		}
 		writer.Write([]string{
+			snapshotId,
 			snap.NodeName,
 			snap.Initiator,
 			utils.SerializeVectorClock(snap.VectorClock),

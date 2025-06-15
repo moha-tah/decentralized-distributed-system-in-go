@@ -124,8 +124,8 @@ func (c *ControlLayer) Start() error {
 	c.isRunning = true
 
 	// go func() {
-	// 	time.Sleep(10 * time.Second)
-	// 	if c.id == "1_control" {
+	// 	time.Sleep(2 * time.Second)
+	// 	if c.id == "6_control" {
 	// 		format.Display_g(c.GetName(), "Start()", "Requesting snapshot")
 	// 		c.RequestSnapshot()
 	// 	}
@@ -157,12 +157,13 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 		c.clk = utils.Synchronise(c.clk, resClk)
 		c.mu.Unlock()
 
-		// BEFORE any processing, snapshots are considered, as snapshot logic is in
-		// another function.
-		var processMessage bool = c.handleSnapshotMsg(msg) // process=True if normal message
-		if !processMessage {
-			return
-		}
+		// var processMessage bool = c.handleSnapshotMsg(msg) // process=True if normal message
+		// if !processMessage {
+		// 	return
+		// }
+		// if strings.Contains(msg, "snapshot") {
+		// 	c.handleSnapshotMsg(msg)
+		// }
 
 		// Extract msg caracteristics
 		var msg_destination string = format.Findval(msg, "destination")
