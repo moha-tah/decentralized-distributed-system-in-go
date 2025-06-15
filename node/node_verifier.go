@@ -743,7 +743,7 @@ func (v *VerifierNode) markItemAsVerified(itemID string, value float32, verifier
 	// By the time the verification is done, the item might have been gone (erased
 	// because new readings were received). If it is the case (ie. the itemID don't
 	// exists anymore), no need to update the verifiedItemIDs nor recentReadings:
-	itemStillPresent, err := v.isItemInReadings(itemID)
+	itemStillPresent, err := v.isItemInReadings(itemID, verifier)
 	if err != nil {
 		format.Display(format.Format_e(v.GetName(), "markIAsVerified()", "Err in isItemInReadings(): "+err.Error()))
 
@@ -796,10 +796,12 @@ func (v *VerifierNode) releaseLock(itemID string, senderID string) {
 	// By the time the verification is done, the item might have been gone (erased
 	// because new readings were received). If it is the case (ie. the itemID don't
 	// exists anymore), no need to update the verifiedItemIDs nor recentReadings:
-	itemStillPresent, err := v.isItemInReadings(itemID)
+	itemStillPresent, err := v.isItemInReadings(itemID, senderID)
+
+	format.Display_g(v.GetName(), "releaseLock()", "Item "+itemID+" from "+senderID+" still present: "+strconv.FormatBool(itemStillPresent))
+
 	if err != nil {
 		format.Display(format.Format_e(v.GetName(), "releaseLock()", "Err is isItemInReadings(): "+err.Error()))
-
 	} else if !itemStillPresent {
 		return
 	}
@@ -925,12 +927,20 @@ func (v *VerifierNode) getReadingIndexFromSender_ID(senderID string, itemID stri
 // for its associated sender (fetched within the itemID).
 // It is used when operation on a models.Reading, as it might
 // have been erased if FIFO was full.
-func (v *VerifierNode) isItemInReadings(itemID string) (bool, error) {
-	parts := strings.Split(itemID, "_")
-	if len(parts) != 2 {
-		return false, fmt.Errorf("invalid item ID format")
+func (v *VerifierNode) isItemInReadings(itemID string, fixedSenderID string) (bool, error) {
+	var senderID string
+
+	if fixedSenderID != "" {
+		senderID = fixedSenderID
+	} else { // Get the sender ID from the item ID
+		// Split the item ID into sender ID and index
+		parts := strings.Split(itemID, "_")
+		if len(parts) != 2 {
+			return false, fmt.Errorf("invalid item ID format")
+		}
+		senderID = parts[0]
 	}
-	senderID := parts[0]
+
 	for _, reading := range v.recentReadings[senderID] {
 		if reading.ReadingID == itemID {
 			return true, nil
