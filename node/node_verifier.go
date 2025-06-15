@@ -320,15 +320,6 @@ func (v *VerifierNode) SendMessage(msg string, toHandleMessageArgs ...bool) {
 
 // CheckUnverifiedItems tries to find and process unverified items
 func (v *VerifierNode) CheckUnverifiedItems() {
-	format.Display_g(v.GetName(), "CheckUnverifiedItems", "Recent readings by sender:")
-	for senderID, readings := range v.recentReadings {
-		var temperatures []float32
-		for _, reading := range readings {
-			temperatures = append(temperatures, reading.Temperature)
-		}
-		format.Display_g(v.GetName(), "CheckUnverifiedItems", fmt.Sprintf("Sender %s: %v", senderID, temperatures))
-	}
-
 	// Re-launch the search for unverified items
 	v.findUnverifiedReadings()
 
