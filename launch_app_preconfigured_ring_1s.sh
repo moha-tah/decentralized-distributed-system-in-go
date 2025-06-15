@@ -1,10 +1,17 @@
 #!/bin/bash
 
+fast_cleanup() {
+    pkill -f '^./main (verifier|user_exp|user_linear|sensor|verifier)'
+    exit 0
+}
+
+trap fast_cleanup SIGINT
+
 declare -a PIDS=()
 
 go build -o main main.go
 
-sleeping_time=2
+sleeping_time=1
 
 ./main verifier 1 &
 PIDS+=($!)

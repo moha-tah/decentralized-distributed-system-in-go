@@ -123,6 +123,14 @@ func (c *ControlLayer) Start() error {
 	format.Display_g(c.GetName(), "Start()", "Child app layer "+c.child.GetName()+" started successfully")
 	c.isRunning = true
 
+	// go func() {
+	// 	time.Sleep(10 * time.Second)
+	// 	if c.id == "1_control" {
+	// 		format.Display_g(c.GetName(), "Start()", "Requesting snapshot")
+	// 		c.RequestSnapshot()
+	// 	}
+	// }()
+
 	// select {}
 	return nil
 }
