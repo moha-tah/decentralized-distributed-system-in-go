@@ -236,6 +236,7 @@ func (n *UserNode) handleLockRelease(msg string) {
 	// exists anymore), no need to update the verifiedItemIDs nor recentReadings:
 	isItemInReadings := false
 	readingIndex := -1
+
 	for i, reading := range n.recentReadings[sensorID] {
 		if reading.ReadingID == itemID {
 			isItemInReadings = true
@@ -366,17 +367,15 @@ func (u *UserNode) startWebServer() {
 func (u *UserNode) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	return
+		return
 	}
 
 	// format.Display_w(u.GetName(), "handleSnapshot()", "Taking snapshot...")
 	u.ctrlLayer.RequestSnapshot()
 
-
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Snapshot taken successfully"))
 }
-
 
 // handleDashboard serves the HTML dashboard
 func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {

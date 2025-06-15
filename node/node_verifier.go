@@ -315,7 +315,6 @@ func (v *VerifierNode) SendMessage(msg string, toHandleMessageArgs ...bool) {
 	v.mu.Lock()
 	v.nbMsgSent++
 	v.mu.Unlock()
-
 }
 
 // CheckUnverifiedItems tries to find and process unverified items
@@ -798,8 +797,6 @@ func (v *VerifierNode) releaseLock(itemID string, senderID string) {
 	// exists anymore), no need to update the verifiedItemIDs nor recentReadings:
 	itemStillPresent, err := v.isItemInReadings(itemID, senderID)
 
-	format.Display_g(v.GetName(), "releaseLock()", "Item "+itemID+" from "+senderID+" still present: "+strconv.FormatBool(itemStillPresent))
-
 	if err != nil {
 		format.Display(format.Format_e(v.GetName(), "releaseLock()", "Err is isItemInReadings(): "+err.Error()))
 	} else if !itemStillPresent {
@@ -818,27 +815,32 @@ func (v *VerifierNode) releaseLock(itemID string, senderID string) {
 		return
 	}
 
-	v.mu.Lock()
-	our_VC := utils.SerializeVectorClock(v.vectorClock)
-	releaseMsgID := v.GenerateUniqueMessageID()
-	releaseMsg := format.Msg_format_multi(
-		format.Build_msg_args(
-			"id", releaseMsgID,
-			"type", "lock_release_and_verified_value",
-			"sender_name", v.GetName(),
-			"sender_name_source", v.GetName(),
-			"sender_type", v.Type(),
-			"destination", "verifiers",
-			"item_id", itemID,
-			"content_type", "verified_value",
-			"content_value", strconv.FormatFloat(float64(itemValue), 'f', 2, 32),
-			"clk", "",
-			"vector_clock", our_VC,
-		))
+	// v.mu.Lock()
 
-	v.mu.Unlock()
+	// our_VC := utils.SerializeVectorClock(v.vectorClock)
+	// releaseMsgID := v.GenerateUniqueMessageID()
+	// releaseMsg := format.Msg_format_multi(
+	// 	format.Build_msg_args(
+	// 		"id", releaseMsgID,
+	// 		// "propagation", "true",
+	// 		"type", "lock_release_and_verified_value",
+	// 		"sender_name", v.GetName(),
+	// 		"sender_name_source", v.GetName(),
+	// 		"sender_type", v.Type(),
+	// 		"destination", "verifiers",
+	// 		"content_type", "verified_value",
+	// 		"vector_clock", our_VC,
+	// 		"clk", "",
+	// 		"item_id", itemID,
+	// 		"content_value", strconv.FormatFloat(float64(itemValue), 'f', 2, 32),
+	// 	))
+	// releaseMsg += "to delete debug"
 
-	v.SendMessage(releaseMsg)
+	// v.mu.Unlock()
+
+	// v.SendMessage(releaseMsg)
+
+	v.ctrlLayer.SendControlMsg(strconv.FormatFloat(float64(itemValue), 'f', 2, 32), "verified_value", "lock_release_and_verified_value", "verifiers", "", v.GetName())
 }
 
 // handleLockRelease processes a lock release message from another verifier

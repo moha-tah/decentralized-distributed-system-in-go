@@ -344,7 +344,7 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 		} else {
 			msg_destination_id, _ := strconv.Atoi(format.Findval(msg, "destination"))
 			if msg_destination_id != -1 && strconv.Itoa(msg_destination_id) == n.id {
-				// if none of the above, and if the msg destinationi is my id,
+				// if none of the above, and if the msg destination is my id,
 				// then I am the destination of the message.
 				// Do something with the message
 			} else if format.Findval(msg, "destination") == "control" || format.Findval(msg, "destination") == "applications" {
@@ -368,7 +368,6 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 }
 
 // This function is called by the control layer to send a message to the network layer.
-// Nothing is done yet (only prints).
 func (n *NetworkLayer) MessageFromControlLayer(msg string) {
 	idToAvoid := "-1"
 	if format.Findval(msg, "type") == "snapshot" {

@@ -168,6 +168,7 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 		// Extract msg caracteristics
 		var msg_destination string = format.Findval(msg, "destination")
 		var msg_type string = format.Findval(msg, "type")
+
 		var sender_name_source string = format.Findval(msg, "sender_name_source")
 
 		// Will be used at the end to check if
@@ -389,6 +390,7 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				c.SendMsg(propagation_message)
 
 			case "lock_release_and_verified_value":
+				format.Display_g(c.GetName(), "HandleMessage()", "Control: Received lock_release_and_verified_value from "+format.Findval(msg, "sender_name_source"))
 				// This type of message if from verifier, to verifier and also users
 				// as is contains the verified value. For verifier, it would have
 				// entered above (case dest=verifier). And for user it is done here:
