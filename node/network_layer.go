@@ -314,7 +314,6 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 	for scanner.Scan() {
 		msg := scanner.Text()
 		if n.SawThatMessageBefore(msg) {
-			format.Display_network(n.GetName(), "handleConnection()", fmt.Sprintf("Ignoring duplicate message ID %s from %s", format.Findval(msg, "id"), format.Findval(msg, "sender_name_source")))
 			break
 		}
 
