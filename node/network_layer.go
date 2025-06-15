@@ -99,7 +99,7 @@ func (n *NetworkLayer) Start() {
 	if len(n.peers) == 0 {
 		n.waitingForAdmission = false // No peers, no admission request needed
 		// n.controlLayer.SetNetworkLayer(n)
-		n.StartControlLayer()
+		n.StartControlLayer(true)
 	} else {
 		n.waitingForAdmission = true // Set to true to wait for admission request
 	}
@@ -196,10 +196,21 @@ func (n *NetworkLayer) startClient(peer_id_str string, wg *sync.WaitGroup) {
 	}
 }
 
-func (n *NetworkLayer) StartControlLayer() {
+func (n *NetworkLayer) StartControlLayer(firstnode_arg ...bool) {
+	firstnode := false
+	if len(firstnode_arg) > 0 && firstnode_arg[0] {
+		firstnode = true 
+	}
 	format.Display_network(n.GetName(), "Start()", "Starting control layer.")
 	n.controlLayer.SetNetworkLayer(n)
 	// go n.controlLayer.Start()
+	if firstnode {
+		n.controlLayer.vectorClock = []int{0}
+		n.controlLayer.nodeIndex = 0
+		n.controlLayer.knownSiteNames = []string{n.controlLayer.GetName()} // Only this node is known
+		n.controlLayer.nbOfKnownSites = 1
+		n.controlLayer.vectorClockReady = true
+	}
 	n.controlLayer.Start()
 	go n.controlLayer.HandleMessage(n.channel_to_control)
 }
@@ -342,12 +353,13 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 			n.AskSnapshotControlAndPropagateSnapshotRequest(msg, peer_id_str)
 			canPropagateMessage = false // Propagation handled in AskSnapshotControlAndPropagateSnapshotRequest
 		} else {
-			msg_destination_id, _ := strconv.Atoi(format.Findval(msg, "destination"))
+			msg_destination := format.Findval(msg, "destination")
+			msg_destination_id, _ := strconv.Atoi(msg_destination)
 			if msg_destination_id != -1 && strconv.Itoa(msg_destination_id) == n.id {
 				// if none of the above, and if the msg destination is my id,
 				// then I am the destination of the message.
 				// Do something with the message
-			} else if format.Findval(msg, "destination") == "control" || format.Findval(msg, "destination") == "applications" {
+			} else if msg_destination == "control" || msg_destination == "applications" || msg_destination == "verifiers" {
 				// it is a message for me.the upper layers. => Pass to control layer
 				// go n.controlLayer.HandleMessage(msg)
 				n.channel_to_control <- msg // Send the message to the control layer through the channel

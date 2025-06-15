@@ -148,10 +148,18 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 
 		// Receiving operations: update the vector clock and the logical clock
 		c.mu.Lock()
-		if c.vectorClockReady {
+		if c.vectorClockReady && format.Findval(msg, "vector_clock") != "" { // can be "" for new_node msg
 			// Update the vector clock
 			recVC := format.RetrieveVectorClock(msg, len(c.vectorClock))
-			c.vectorClock = utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
+			vectorClock, err := utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
+			if err != nil {
+				if len(c.vectorClock) == 0 || len(c.vectorClock) > len(recVC) {
+					c.vectorClock = recVC 
+				}
+			} else {
+				c.vectorClock = vectorClock
+			}
+
 		}
 		resClk, _ := strconv.Atoi(format.Findval(msg, "clk"))
 		c.clk = utils.Synchronise(c.clk, resClk)
@@ -239,7 +247,8 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				newPeerNames := make([]string, len(newPeerIDs))
 				for i, id := range newPeerIDs {
 					// This assumes a consistent naming convention for control layers.
-					newPeerNames[i] = "control (" + id + "_control)"
+					name := "control (" + id + "_control)"
+					newPeerNames[i] = name
 				}
 				slices.Sort(newPeerNames)
 
@@ -295,6 +304,7 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				c.knownSiteNames = newPeerNames
 				c.nbOfKnownSites = len(newPeerNames)
 				c.vectorClock = newControlVC
+				c.vectorClockReady = true 
 				c.nodeIndex = utils.FindIndex(c.GetName(), newPeerNames)
 				c.mu.Unlock()
 
@@ -370,7 +380,7 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				// The user also needs to receive the verified value:
 				c.SendMsg(msg, true) // through channel
 			}
-			propagate_msg = true // Propagate to other verifiers
+			// propagate_msg = true // Propagate to other verifiers
 		} else if msg_destination == c.child.GetName() {
 			// The msg is directly for the child app layer
 			c.SendMsg(msg, true) // through channel

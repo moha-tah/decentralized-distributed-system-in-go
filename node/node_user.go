@@ -28,6 +28,7 @@ type UserNode struct {
 	verifiedItemIDs   map[string][]string         // Tracks the verified item for each sender by their ID
 	httpServer        *http.Server                // HTTP server for web UI
 	port              int                         // HTTP server port
+	snapshotInProgress bool 
 }
 
 // NewUserNode creates a new user node
@@ -54,6 +55,7 @@ func NewUserNode(id string, model string, port int) *UserNode {
 		recentPredictions: make(map[string][]float32),
 		verifiedItemIDs:   make(map[string][]string),
 		port:              port,
+		snapshotInProgress: false,
 	}
 }
 
@@ -64,7 +66,18 @@ func (u *UserNode) Start() error {
 	// Start the HTTP server for web UI
 	go u.startWebServer()
 
-	u.isRunning = true
+	go func() {
+		u.mu.Lock()
+		vcReady := u.vectorClockReady
+		u.mu.Unlock()
+		for !vcReady {
+			time.Sleep(500 * time.Millisecond) // Wait until vector clock is ready
+			u.mu.Lock()
+			vcReady = u.vectorClockReady
+			u.mu.Unlock()
+		}
+		u.isRunning = true
+	}()
 	return nil
 }
 
@@ -82,26 +95,40 @@ func (u *UserNode) HandleMessage(channel chan string) {
 	for msg := range channel {
 		u.mu.Lock()
 
+		if !u.isRunning {
+			u.mu.Unlock()
+			continue 
+		}
+
 		rec_clk_str := format.Findval(msg, "clk")
 		rec_clk, _ := strconv.Atoi(rec_clk_str)
 		u.clk = utils.Synchronise(u.clk, rec_clk)
 		clk_int := u.clk
 		if u.vectorClockReady {
 			recVC := format.RetrieveVectorClock(msg, len(u.vectorClock))
-			u.vectorClock = utils.SynchroniseVectorClock(u.vectorClock, recVC, u.nodeIndex)
+			vectorClock, err := utils.SynchroniseVectorClock(u.vectorClock, recVC, u.nodeIndex)
+			u.vectorClock = vectorClock
+			if err != nil {
+				if len(u.vectorClock) == 0 || len(u.vectorClock) > len(recVC) {
+					u.vectorClock = recVC 
+				}
+			}
 		}
 		u.mu.Unlock()
 
 		var msg_type string = format.Findval(msg, "type")
 		var msg_content_value string = format.Findval(msg, "content_value")
-		var msg_sender string = format.Findval(msg, "sender_name")
+		// var msg_sender string = format.Findval(msg, "sender_name")
+
+		itemID := format.Findval(msg, "item_id")
+		sensor_name := strings.Split(itemID, "_")[0]
 
 		switch msg_type {
 		case "new_reading":
 			// Add the new reading to our local store for the specific sender
 			format.Display(format.Format_d(
 				"node_user.go", "HandleMessage()",
-				u.GetName()+" received the new reading <"+msg_content_value+"> from "+msg_sender))
+				u.GetName()+" received the new reading <"+msg_content_value+"> from "+sensor_name))
 
 			// Parse the reading value
 			readingVal, err := strconv.ParseFloat(msg_content_value, 32)
@@ -113,9 +140,19 @@ func (u *UserNode) HandleMessage(channel chan string) {
 
 			// Get or create the queue for the sender
 			u.mu.Lock()
-			queue, exists := u.recentReadings[msg_sender]
+			queue, exists := u.recentReadings[sensor_name]
 			if !exists {
 				queue = make([]models.Reading, 0, utils.VALUES_TO_STORE)
+			} else {
+				// If the queue exist, maybe we already have this reading (verifier answer received before this new_reading)
+				// So make sure we don't add it again:
+				// Check if the reading already exists in the queue
+				for _, reading := range queue {
+					if reading.ReadingID == format.Findval(msg, "item_id") {
+						u.mu.Unlock()
+						continue
+					}
+				}
 			}
 
 			// Add to FIFO queue for this sender
@@ -133,10 +170,10 @@ func (u *UserNode) HandleMessage(channel chan string) {
 				ReadingID:   format.Findval(msg, "item_id"),
 				Temperature: float32(readingVal),
 				Clock:       clk_int,
-				SensorID:    msg_sender,
+				SensorID:    sensor_name,
 				IsVerified:  false,
 			})
-			u.recentReadings[msg_sender] = queue // Update the map
+			u.recentReadings[sensor_name] = queue // Update the map
 			u.mu.Unlock()
 
 			u.processDatabse()
@@ -221,7 +258,7 @@ func (n *UserNode) handleLockRelease(msg string) {
 	// Extract information from the message
 	itemID := format.Findval(msg, "item_id")
 	sensorID := strings.Split(itemID, "_")[0]
-	verifier := format.Findval(msg, "sender_name_source")
+	verifier := format.Findval(msg, "verified_by")
 	verifiedValueStr := format.Findval(msg, "content_value")
 	verifiedValue, err := strconv.ParseFloat(verifiedValueStr, 32)
 	if err != nil {
@@ -245,8 +282,84 @@ func (n *UserNode) handleLockRelease(msg string) {
 		}
 	}
 	if !isItemInReadings {
-		n.mu.Unlock()
-		return
+		// Maybe the item is most recent than the latest we have => verifier sent the msg before we receive the reading from the sensor.
+		// We this add this item to the recentReadings:
+
+		need_to_add := false
+
+		// 1: find the latest reading for this sensor
+		_, exists := n.recentReadings[sensorID]
+		if !exists {
+			need_to_add = true
+		} else {
+			latestReading := n.recentReadings[sensorID][len(n.recentReadings[sensorID])-1]
+			latestReadig_clk, _ := strconv.Atoi(strings.Split(latestReading.ReadingID, "_")[1])
+
+			// 2: Check if the reading is more recent than the latest we have
+			item_clk := strings.Split(itemID, "_")[1]
+			item_clk_int, err := strconv.Atoi(item_clk)
+			if err != nil {
+				log.Printf("%s: Error parsing clock from itemID '%s': %v", n.GetName(), itemID, err)
+				n.mu.Unlock()
+				return
+			}
+
+			if item_clk_int > latestReadig_clk {
+				need_to_add = true
+			} else {
+				need_to_add = false
+			}
+		}
+		
+
+		if need_to_add {
+			// Get or create the queue for the sender
+			n.mu.Lock()
+			queue, exists := n.recentReadings[sensorID]
+			if !exists {
+				queue = make([]models.Reading, 0, utils.VALUES_TO_STORE)
+			} else {
+				// If the queue exist, maybe we already have this reading (verifier answer received before this new_reading)
+				// So make sure we don't add it again:
+				// Check if the reading already exists in the queue
+				for _, reading := range queue {
+					if reading.ReadingID == format.Findval(msg, "item_id") {
+						n.mu.Unlock()
+						continue
+					}
+				}
+			}
+
+			// Add to FIFO queue for this sender
+			if len(queue) >= utils.VALUES_TO_STORE {
+
+				// Remove all occurrences of the readingID from the verifiedItemIDs map
+				for senderID, itemIDs := range n.verifiedItemIDs {
+					n.verifiedItemIDs[senderID] = utils.RemoveAllOccurrencesString(itemIDs, queue[0].ReadingID)
+				}
+
+				// Remove the oldest element (slice trick)
+				queue = queue[1:]
+			}
+			queue = append(queue, models.Reading{
+				ReadingID:   format.Findval(msg, "item_id"),
+				Temperature: float32(verifiedValue),
+				Clock:       n.clk,
+				SensorID:    sensorID,
+				IsVerified:  false,
+			})
+			n.recentReadings[sensorID] = queue // Update the map
+			n.mu.Unlock()
+
+
+
+
+		} else {
+
+			format.Display_w(n.GetName(), "handleLockRelease()", "Item "+itemID+" not found in recent readings for sensor "+sensorID+". Skipping verification update.")
+			n.mu.Unlock()
+			return
+		}
 	}
 
 	// Update the verified item list for this sender
@@ -371,10 +484,39 @@ func (u *UserNode) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// format.Display_w(u.GetName(), "handleSnapshot()", "Taking snapshot...")
+	u.mu.Lock()
+	u.snapshotInProgress = true
+	snapshotInProgress := true
+	u.mu.Unlock()
 	u.ctrlLayer.RequestSnapshot()
 
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Snapshot taken successfully"))
+	
+	timeWaited := 0
+	maxWait := 3 * time.Second // Maximum wait time for snapshot to complete
+	for snapshotInProgress {
+		time.Sleep(100 * time.Millisecond) // Wait for snapshot to complete
+		u.mu.Lock()
+		snapshotInProgress = u.snapshotInProgress
+		u.mu.Unlock()
+		timeWaited += 100
+		if timeWaited >= int(maxWait.Milliseconds()) {
+			break
+		}
+	}
+
+	if !snapshotInProgress {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Snapshot taken successfully"))
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Snapshot could not be taken in time"))
+	}
+}
+
+func (n *UserNode) SetSnapshotInProgress(inProgress bool) {
+	n.mu.Lock()
+	n.snapshotInProgress = inProgress
+	n.mu.Unlock()
 }
 
 // handleDashboard serves the HTML dashboard
@@ -670,7 +812,7 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		    return response.text();
 		})
 		.then(msg => {
-		    alert(msg); // optional success feedback
+		     alert(msg); // success feedback
 		})
 		.catch(error => {
 		    console.error('Snapshot error:', error);

@@ -14,7 +14,7 @@ go build -o main main.go
 ./main user_exp 1 &
 PIDS+=($!)
 
-./main user_exp 2 1 &
+./main verifier 2 1 &
 PIDS+=($!)
 
 ./main user_linear 3 1 2 & 

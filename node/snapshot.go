@@ -71,6 +71,7 @@ func (c *ControlLayer) TakeSnapshotAndPrepareMessage(msg string) string{
 				snapshots[state_data.NodeName] = state_data
 			}
 			c.SaveSnapshotToCSVThreadSafe(snapshots, format.Findval(msg, "snapshot_id"))
+			c.child.SetSnapshotInProgress(false) // For the user to update its UI
 		} else {
 			snap_data := c.takeSnapshot(snapshot_id, initiator)
 

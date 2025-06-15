@@ -15,17 +15,21 @@ func Synchronise(x int, y int) int {
 	return max(x, y) + 1
 }
 
-func SynchroniseVectorClock(vc1 []int, vc2 []int, caller_index int) []int {
+func SynchroniseVectorClock(vc1 []int, vc2 []int, caller_index int) ([]int, error) {
 	if len(vc1) != len(vc2) {
-		panic("utils.SynchroniseVectorClock: vector clocks must be of the same length. Got " +
-			strconv.Itoa(len(vc1)) + " and " + strconv.Itoa(len(vc2)))
+		return nil, fmt.Errorf(fmt.Sprintf("utils.SynchroniseVectorClock: vector clocks must be of the same length. Got %d and %d", len(vc1), len(vc2)))
+	}
+	if len(vc1) == 0 {
+		return vc2, nil
+	} else if len(vc2) == 0 {
+		return vc1, nil
 	}
 	newVC := make([]int, len(vc1))
 	for i := 0; i < len(vc1); i++ {
 		newVC[i] = max(vc1[i], vc2[i])
 	}
 	newVC[caller_index] += 1
-	return newVC
+	return newVC, nil
 }
 
 func RemoveAllOccurrencesInt(slice []int, value int) []int {

@@ -37,7 +37,15 @@ func (c *ControlLayer) SendApplicationMsg(msg string) error {
 	c.mu.Lock()
 	// app necessarily has a vector clock if it has started
 	recVC := format.RetrieveVectorClock(msg, len(c.vectorClock))
-	c.vectorClock = utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
+	vectorClock, err := utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
+	if err != nil {
+		format.Display_e("SendApplicationMsg()", c.GetName(), "Error synchronising vector clock: "+err.Error())
+		if len(c.vectorClock) == 0 || len(c.vectorClock) > len(recVC) {
+			c.vectorClock = recVC
+		}
+	} else {
+		c.vectorClock = vectorClock
+	}
 	c.mu.Unlock()
 
 	c.SendMsg(msg)
@@ -98,7 +106,9 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs ...bool) {
 	c.mu.Lock()
 	if c.vectorClockReady {
 		c.vectorClock[c.nodeIndex] += 1 // Incrément de l'horloge vectorielle locale
-		msg = format.Replaceval(msg, "vector_clock", utils.SerializeVectorClock(c.vectorClock))
+		msg = format.AddOrReplaceFieldToMessage(msg, "vector_clock", utils.SerializeVectorClock(c.vectorClock))
+	} else {
+		format.Display_w(c.GetName(), "SendMsg()", "Vector clock not ready, using local clock only")
 	}
 	c.clk += 1 // Incrément de l'horloge locale
 	msg = format.Replaceval(msg, "clk", strconv.Itoa(c.clk))

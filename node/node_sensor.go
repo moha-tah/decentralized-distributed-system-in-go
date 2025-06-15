@@ -47,7 +47,18 @@ func (s *SensorNode) Start() error {
 		"Start()", "node_sensor.go",
 		"Starting sensor node "+s.GetName()))
 
-	s.isRunning = true
+	go func() {
+		s.mu.Lock()
+		vcReady := s.vectorClockReady
+		s.mu.Unlock()
+		for !vcReady {
+			time.Sleep(500 * time.Millisecond) // Wait until vector clock is ready
+			s.mu.Lock()
+			vcReady = s.vectorClockReady
+			s.mu.Unlock()
+		}
+		s.isRunning = true
+	}()
 
 	go func() {
 		for {
@@ -239,4 +250,8 @@ func (n *SensorNode) GetLocalState() string {
 	}
 	n.mu.Unlock()
 	return strings.Join(readings, ", ")
+}
+
+func (n *SensorNode) SetSnapshotInProgress(inProgress bool) {
+	return
 }

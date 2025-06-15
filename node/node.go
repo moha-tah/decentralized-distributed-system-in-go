@@ -46,6 +46,9 @@ type Node interface {
 
 	// SetApplicationState sets the application-specific state of the node.
 	SetApplicationState(state map[string][]models.Reading)
+
+	// Used only for Users, from control layer, to update web UI 
+	SetSnapshotInProgress(inProgress bool)
 }
 
 // BaseNode implements common functionality for all node types

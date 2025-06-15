@@ -54,7 +54,19 @@ func NewVerifierNode(id string, capacity int, threshold float32, baseTempLow flo
 func (v *VerifierNode) Start() error {
 	format.Display(format.Format_d("Start()", "node_verifier.go", "Starting verifier node "+v.GetName()))
 
-	v.isRunning = true
+	go func() {
+		v.mu.Lock()
+		vcReady := v.vectorClockReady
+		v.mu.Unlock()
+		for !vcReady {
+			time.Sleep(500 * time.Millisecond) // Wait until vector clock is ready
+			v.mu.Lock()
+			vcReady = v.vectorClockReady
+			v.mu.Unlock()
+		}
+		v.isRunning = true
+	}()
+
 
 	// Start a goroutine to periodically check for unverified items
 	go func() {
@@ -64,6 +76,12 @@ func (v *VerifierNode) Start() error {
 		isRunning := v.isRunning
 		processingCapacity := v.processingCapacity
 		v.mu.Unlock()
+		for !isRunning {
+			time.Sleep(500 * time.Millisecond) // Wait until the node is running
+			v.mu.Lock()
+			isRunning = v.isRunning
+			v.mu.Unlock()
+		}
 
 		for isRunning {
 			select {
@@ -122,7 +140,14 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 		clk_int := v.clk
 		// if v.vectorClockReady == true {
 		recVC := format.RetrieveVectorClock(msg, len(v.vectorClock))
-		v.vectorClock = utils.SynchroniseVectorClock(v.vectorClock, recVC, v.nodeIndex)
+		vectorClock, err := utils.SynchroniseVectorClock(v.vectorClock, recVC, v.nodeIndex)
+		if err != nil {
+			if len(v.vectorClock) == 0 || len(v.vectorClock) > len(recVC) {
+				v.vectorClock = recVC 
+			}
+		} else {
+			v.vectorClock = vectorClock 
+		}
 		// }
 		v.mu.Unlock()
 
@@ -292,8 +317,11 @@ func (v *VerifierNode) SendMessage(msg string, toHandleMessageArgs ...bool) {
 		toHandleMessage = toHandleMessageArgs[0]
 	}
 	v.mu.Lock()
-	v.vectorClock[v.nodeIndex]++
-	serializedClock := utils.SerializeVectorClock(v.vectorClock)
+	serializedClock := ""
+	if len(v.vectorClock) > 0 {
+		v.vectorClock[v.nodeIndex]++
+		serializedClock = utils.SerializeVectorClock(v.vectorClock)
+	}
 	v_clk := v.clk
 	v.mu.Unlock()
 
@@ -815,32 +843,34 @@ func (v *VerifierNode) releaseLock(itemID string, senderID string) {
 		return
 	}
 
-	// v.mu.Lock()
-
-	// our_VC := utils.SerializeVectorClock(v.vectorClock)
-	// releaseMsgID := v.GenerateUniqueMessageID()
-	// releaseMsg := format.Msg_format_multi(
-	// 	format.Build_msg_args(
-	// 		"id", releaseMsgID,
-	// 		// "propagation", "true",
-	// 		"type", "lock_release_and_verified_value",
-	// 		"sender_name", v.GetName(),
-	// 		"sender_name_source", v.GetName(),
-	// 		"sender_type", v.Type(),
-	// 		"destination", "verifiers",
-	// 		"content_type", "verified_value",
-	// 		"vector_clock", our_VC,
-	// 		"clk", "",
-	// 		"item_id", itemID,
-	// 		"content_value", strconv.FormatFloat(float64(itemValue), 'f', 2, 32),
-	// 	))
+	v.mu.Lock()
+	our_VC := utils.SerializeVectorClock(v.vectorClock)
+	releaseMsgID := v.GenerateUniqueMessageID()
+	releaseMsg := format.Msg_format_multi(
+		format.Build_msg_args(
+			"id", releaseMsgID,
+			// "propagation", "true",
+			"type", "lock_release_and_verified_value",
+			"sender_name", v.GetName(),
+			"sender_name_source", v.GetName(),
+			"sender_type", v.Type(),
+			"destination", "verifiers",
+			"content_type", "verified_value",
+			"vector_clock", our_VC,
+			"clk", strconv.Itoa(v.clk),
+			"item_id", itemID,
+			"verified_by", v.GetName(),
+			"content_value", strconv.FormatFloat(float64(itemValue), 'f', 2, 32),
+		))
 	// releaseMsg += "to delete debug"
 
-	// v.mu.Unlock()
+	v.mu.Unlock()
 
 	// v.SendMessage(releaseMsg)
+	format.Display(format.Format_d(v.GetName(), "releaseLock()", "Releasing lock on item "+itemID+" with value "+strconv.FormatFloat(float64(itemValue), 'f', 2, 32) + "with VC "+our_VC))
+	v.ctrlLayer.SendApplicationMsg(releaseMsg)
 
-	v.ctrlLayer.SendControlMsg(strconv.FormatFloat(float64(itemValue), 'f', 2, 32), "verified_value", "lock_release_and_verified_value", "verifiers", "", v.GetName())
+	// v.ctrlLayer.SendControlMsg(strconv.FormatFloat(float64(itemValue), 'f', 2, 32), "verified_value", "lock_release_and_verified_value", "verifiers", "", v.GetName())
 }
 
 // handleLockRelease processes a lock release message from another verifier
@@ -1002,4 +1032,10 @@ func (v *VerifierNode) SetApplicationState(state map[string][]models.Reading) {
 
 	v.recentReadings = state
 	format.Display_g(v.GetName(), "SetApplicationState", "Successfully restored recentReadings.")
+}
+
+
+
+func (n *VerifierNode) SetSnapshotInProgress(inProgress bool) {
+	return
 }

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strconv"
+	// "strconv"
 	"strings"
 )
 
@@ -147,10 +147,10 @@ func RetrieveVectorClock(msg string, length_to_compare int) []int {
 		stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock deserialization: "+err.Error()))
 		return nil
 	}
-	if len(recVC) != length_to_compare {
-		stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock length: "+strconv.Itoa(len(recVC_str))+"vs "+strconv.Itoa(length_to_compare)))
-		return nil
-	}
+	// if len(recVC) != length_to_compare {
+	// 	stderr.Print(Format_e("message.go", "retrieveVectorClock", "Error of vector_clock length: "+strconv.Itoa(len(recVC_str))+"vs "+strconv.Itoa(length_to_compare)))
+	// 	return nil
+	// }
 	return recVC
 }
 
