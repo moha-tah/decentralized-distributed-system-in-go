@@ -18,20 +18,20 @@ import (
 
 // BaseNode implements common functionality for all node types
 type NetworkLayer struct {
-	id               string
-	mu               sync.Mutex
-	nodeType         string
-	childType        string // Type of the child node (e.g., "user", "verifier"...)
-	isRunning        bool
-	nbMsgSent        int
-	msg_id           int64
-	counter          int           // Temporary variable for the vector clock
-	vectorClock      []int         // taille = nombre total de noeuds
-	vectorClockReady bool          // true après pear_discovery_sealing
-	nodeIndex        int           // position de ce node dans le vecteur
-	appNode          *Node         // Pointer to the application node
-	controlLayer     *ControlLayer // Pointer to the control layer
-	channel_to_control chan string // Channel to send messages to the control layer
+	id                 string
+	mu                 sync.Mutex
+	nodeType           string
+	childType          string // Type of the child node (e.g., "user", "verifier"...)
+	isRunning          bool
+	nbMsgSent          int
+	msg_id             int64
+	counter            int           // Temporary variable for the vector clock
+	vectorClock        []int         // taille = nombre total de noeuds
+	vectorClockReady   bool          // true après pear_discovery_sealing
+	nodeIndex          int           // position de ce node dans le vecteur
+	appNode            *Node         // Pointer to the application node
+	controlLayer       *ControlLayer // Pointer to the control layer
+	channel_to_control chan string   // Channel to send messages to the control layer
 
 	// Keep track of the messages received
 	IDWatcher *format.MIDWatcher
@@ -59,19 +59,19 @@ func NewNetworkLayer(id, nodeType string, appNode *Node, controlLayer *ControlLa
 	listenPort := strconv.Itoa(9000 + id_str)
 
 	return NetworkLayer{
-		id:               id,
-		mu:               sync.Mutex{},
-		nodeType:         "network",
-		childType:        nodeType,
-		isRunning:        false,
-		nbMsgSent:        0,
-		msg_id:           0,
-		counter:          0,
-		nodeIndex:        0,
-		vectorClockReady: false,
-		IDWatcher:        format.NewMIDWatcher(),
-		appNode:          appNode,
-		controlLayer:     controlLayer,
+		id:                 id,
+		mu:                 sync.Mutex{},
+		nodeType:           "network",
+		childType:          nodeType,
+		isRunning:          false,
+		nbMsgSent:          0,
+		msg_id:             0,
+		counter:            0,
+		nodeIndex:          0,
+		vectorClockReady:   false,
+		IDWatcher:          format.NewMIDWatcher(),
+		appNode:            appNode,
+		controlLayer:       controlLayer,
 		channel_to_control: make(chan string, 10), // Buffered channel to send messages to the control layer
 
 		listenPort:         listenPort,
@@ -177,6 +177,7 @@ func (n *NetworkLayer) startClient(peer_id_str string, wg *sync.WaitGroup) {
 		for _, p := range n.peers {
 			p_int, _ := strconv.Atoi(p)
 			destination := strconv.Itoa(p_int + 9000)
+
 			msg := format.Build_msg(
 				"type", "admission_request",
 				"destination", destination,
@@ -195,11 +196,11 @@ func (n *NetworkLayer) startClient(peer_id_str string, wg *sync.WaitGroup) {
 	}
 }
 
-func (n* NetworkLayer) StartControlLayer() {
+func (n *NetworkLayer) StartControlLayer() {
 	format.Display_network(n.GetName(), "Start()", "Starting control layer.")
 	n.controlLayer.SetNetworkLayer(n)
 	// go n.controlLayer.Start()
-	n.controlLayer.Start() 
+	n.controlLayer.Start()
 	go n.controlLayer.HandleMessage(n.channel_to_control)
 }
 
@@ -313,7 +314,7 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 	for scanner.Scan() {
 		msg := scanner.Text()
 		if n.SawThatMessageBefore(msg) {
-			break	
+			break
 		}
 
 		peer_id_str := format.Findval(msg, "sender_id")
@@ -358,7 +359,7 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 		if canPropagateMessage {
 			n.propagateMessage(msg, peer_id_str)
 		}
-		break	
+		break
 	}
 	n.mu.Unlock()
 }
@@ -483,7 +484,7 @@ func (n *NetworkLayer) handleAdmissionWaveDown(msg string, conn net.Conn) {
 				"type", "admission_wave_up",
 				"destination", senderID,
 				"requester", requesterName, // The node requesting admission
-				"requester_app_name", format.Findval(msg, "requester_app_name"), 
+				"requester_app_name", format.Findval(msg, "requester_app_name"),
 				"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
 				"leader_id", strconv.Itoa(rcvLeaderId),
 			)
@@ -530,7 +531,7 @@ func (n *NetworkLayer) handleAdmissionWaveUp(msg string, conn net.Conn) {
 					"type", "admission_wave_up",
 					"destination", "network",
 					"requester", format.Findval(msg, "requester"), // The node requesting admission
-					"requester_app_name", format.Findval(msg, "requester_app_name"), 
+					"requester_app_name", format.Findval(msg, "requester_app_name"),
 					"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
 					"leader_id", strconv.Itoa(electedLeader),
 				)
@@ -561,7 +562,7 @@ func (n *NetworkLayer) acceptAdmission(msg string, conn net.Conn) {
 		"type", "admission_granted",
 		"destination", "network",
 		"requester", requester, // The node requesting admission
-		"requester_app_name", format.Findval(msg, "requester_app_name"), 
+		"requester_app_name", format.Findval(msg, "requester_app_name"),
 		"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
 		"known_peers", msg_content, // List of known peers
 	)
@@ -577,7 +578,6 @@ func (n *NetworkLayer) acceptAdmission(msg string, conn net.Conn) {
 // 1. For the requesting node, it means it has been admitted and can start its activity.
 // 2. For the node connected to the requesting node, it means it can now accept the new node
 func (n *NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
-
 	senderID_int, _ := strconv.Atoi(format.Findval(msg, "sender_id"))
 
 	msgToSendAfterOperations := map[int]string{}
@@ -666,7 +666,7 @@ func (n *NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
 					"destination", strconv.Itoa(nid),
 					"propagation", "true",
 					"requester", format.Findval(msg, "requester"),
-					"requester_app_name", format.Findval(msg, "requester_app_name"), 
+					"requester_app_name", format.Findval(msg, "requester_app_name"),
 					"requested_connections", format.Findval(msg, "requested_connections"),
 					"known_peers", format.Findval(msg, "known_peers"),
 				)
@@ -682,7 +682,7 @@ func (n *NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
 			"type", "new_node",
 			"destination", n.controlLayer.GetName(), // Send to control layer
 			"new_node", format.Findval(msg, "requester"), // The new node that has been admitted
-			"new_node_app_name", format.Findval(msg, "requester_app_name"), 
+			"new_node_app_name", format.Findval(msg, "requester_app_name"),
 			"requested_connections", format.Findval(msg, "requested_connections"), // The requested connections
 			"known_peers", strings.Join(n.knownPeersIDs, utils.PearD_SITE_SEPARATOR), // List of known peers
 			"id_of_neighbors", strings.Join(active_nids, utils.PearD_SITE_SEPARATOR), // IDs of active neighbors
@@ -700,15 +700,15 @@ func (n *NetworkLayer) handleAdmissionGranted(msg string, conn net.Conn) {
 	format.Display_network(n.GetName(), "handleAdmissionGranted()", "Known peers: "+strings.Join(n.knownPeersIDs, ", "))
 
 	// --------- debug -----------
-	active_nids := ""
-	for _, nid := range n.activeNeighborsIDs {
-		active_nids += strconv.Itoa(nid) + ", "
+	active_nIds := ""
+	for _, nId := range n.activeNeighborsIDs {
+		active_nIds += strconv.Itoa(nId) + ", "
 	}
-	format.Display_network(n.GetName(), "handleAdmissionGranted()", "Active neighbors: "+active_nids)
+	format.Display_network(n.GetName(), "handleAdmissionGranted()", "Active neighbors: "+active_nIds)
 	// ----------------------------
 
-	for nid, msgToSend := range msgToSendAfterOperations {
-		n.SendMessage(msgToSend, nid)
+	for nId, msgToSend := range msgToSendAfterOperations {
+		n.SendMessage(msgToSend, nId)
 	}
 	for _, msgToSend := range msgToSendAfterOperationsToControl {
 		n.SendMessage(msgToSend, -1, true) // Send to control layer

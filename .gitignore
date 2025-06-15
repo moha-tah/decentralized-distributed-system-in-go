@@ -1,3 +1,5 @@
 # Ignore binaries
 main
 *.out
+*.log
+*_log.txt

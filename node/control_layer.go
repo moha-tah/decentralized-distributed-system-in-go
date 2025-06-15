@@ -1,17 +1,17 @@
 package node
 
 import (
+	"bytes"
 	"distributed_system/format"
+	"distributed_system/models"
 	"distributed_system/utils"
+	"encoding/base64"
+	"encoding/gob"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	// "time"
-	// "strings"
-	// "os" // Use for the bufio reader: reads from os stdin
-	// "bufio" // Use bufio to read full line, as fmt.Scanln split at new line AND spaces
 )
 
 type ControlLayer struct {
@@ -118,82 +118,16 @@ func (c *ControlLayer) Start() error {
 	// Msg to application will be send through channel
 	go c.child.HandleMessage(c.channel_to_application)
 
-	// Idea to know how many nodes exists:
-	// We can not send the pear discovery message RIGHT AT startup: other nodes won't be
-	// created yet, at the network_ring.sh script creates nodes one after the other. So
-	// the idea is to wait 1 seconds (which is much, 0,1s should be enough) for all the nodes
-	// to be created, then sending the pear discovery message.
-	// We then suppose that all the response will be aquired by the node 0 (only node which makes
-	// the call) after 1 seconds.
-	// 🔥ONLY node whose id is zero will send this message.
-	if c.id == "6_control" {
-		// go func() {
-		// 	// 1. Wait for all control layer to be instanciated
-		// 	time.Sleep(time.Duration(1) * time.Second)
-		//
-		// 	// 2. Send pear discovery to know all nodes in the network
-		// 	c.SendPearDiscovery()
-			// 	time.Sleep(time.Duration(2) * time.Second)
-			//
-			// 	// 3. Close the pear discovery (=send all received names to all nodes)
-			// 	c.ClosePearDiscovery() // Will send known names to all nodes
-			// 	time.Sleep(time.Duration(1) * time.Second)
-			//
-			// 	// 4. Start tree construction only after we know our neighbors
-			// 	c.mu.Lock()
-			// 	directNeighborsEnd := c.directNeighborsEnd
-			// 	c.mu.Unlock()
-			// 	for directNeighborsEnd == false {
-			// 		time.Sleep(time.Duration(100) * time.Millisecond)
-			// 		c.mu.Lock()
-			// 		directNeighborsEnd = c.directNeighborsEnd
-			// 		c.mu.Unlock()
-			// 	}
-			// 	c.SendTreeConstruction()
-		// }()
-		// //demande de snapshot après 5 secondes
-		// go func() {
-		// 	time.Sleep(6 * time.Second) // attendre que tout soit initialisé
-		// 	format.Display(format.Format_d("Start()", c.GetName(), "⏳ 10s écoulées, envoi de la requête snapshot..."))
-		// 	c.RequestSnapshot()
-		// 	format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
-		// 	time.Sleep(3 * time.Second) // attendre que tout soit initialisé
-		// 	format.Display(format.Format_d("Start()", c.GetName(), "⏳ 10s écoulées, envoi de la requête snapshot..."))
-		// 	c.RequestSnapshot()
-		// 	format.Display(format.Format_d("Start()", c.GetName(), "📤 snapshot_request envoyé depuis "+c.GetName()))
-		// }()
-	}
-
-	// ALL nodes wait, send neighbor discovery message to their direct neighbors,
-	// and then start their child.
-	// go func() { // Wake up child only after pear discovery is finished
-	// 	time.Sleep(time.Duration(4) * time.Second)
-	// 	c.SendNeighborDiscovery()
-	// 	time.Sleep(time.Duration(1) * time.Second)
-	// 	c.mu.Lock()
-	// 	c.directNeighborsEnd = true // We know our directNeighbors
-	// 	c.mu.Unlock()
-	//
-	// 	c.child.Start()
-	// }()
-
 	format.Display_g(c.GetName(), "Start()", "Control layer "+c.GetName()+" is starting its child app layer "+c.child.GetName())
 	go c.child.Start()
 	format.Display_g(c.GetName(), "Start()", "Child app layer "+c.child.GetName()+" started successfully")
 	c.isRunning = true
 
-	// Go routine to read messages from stdin and call HandleMessage() on each new message.
 	// go func() {
-	// 	reader := bufio.NewReader(os.Stdin)
-	// 	for {
-	// 		rcvmsg, err := reader.ReadString('\n') // read until newline
-	// 		if err != nil {
-	// 			// Handle error properly, e.g., if the connection is closed
-	// 			format.Display(format.Format_e(c.GetName(), "Start()", "Reading error: "+err.Error()))
-	// 			return
-	// 		}
-	// 		rcvmsg = strings.TrimSuffix(rcvmsg, "\n") // remove the trailing newline character
-	// 		c.HandleMessage(rcvmsg)
+	// 	time.Sleep(10 * time.Second)
+	// 	if c.id == "1_control" {
+	// 		format.Display_g(c.GetName(), "Start()", "Requesting snapshot")
+	// 		c.RequestSnapshot()
 	// 	}
 	// }()
 
@@ -202,16 +136,14 @@ func (c *ControlLayer) Start() error {
 }
 
 // HandleMessage processes incoming messages
-// func (c *ControlLayer) HandleMessage(msg string) error {
 func (c *ControlLayer) HandleMessage(channel chan string) {
-	
+
 	for msg := range channel {
-		format.Display_d(c.GetName(), "HandleMessage()", "Received message of type: "+format.Findval(msg, "type")+" by "+format.Findval(msg, "sender_name_source")+" through node "+format.Findval(msg, "sender_name") + "to destination " + format.Findval(msg, "destination"))
-		// Make sure we never saw this message before.
+		format.Display_d(c.GetName(), "HandleMessage()", "Received message of type: "+format.Findval(msg, "type")+" by "+format.Findval(msg, "sender_name_source")+" through node "+format.Findval(msg, "sender_name")+"to destination "+format.Findval(msg, "destination"))
 		// It might happen eg. in a bidirectionnal ring.
 		// If it is the case (= duplicate) => ignore.
 		if c.SawThatMessageBefore(msg) {
-			return 
+			return
 		}
 
 		// Receiving operations: update the vector clock and the logical clock
@@ -229,7 +161,7 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 		// another function.
 		var processMessage bool = c.handleSnapshotMsg(msg) // process=True if normal message
 		if !processMessage {
-			return 
+			return
 		}
 
 		// Extract msg caracteristics
@@ -297,8 +229,7 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 			case "tree_red": // tree construction message (red messages from lecture)
 				c.processRedTree(msg)
 			case "new_node":
-				format.Display_d(c.GetName(), "HandleMsg()", "New node received has id "+format.Findval(msg, "new_node")+", and its app layer name is "+format.Findval(msg, "new_node_app_name"))
-				
+				format.Display_g(c.GetName(), "HandleMessage()", "New node received has id "+format.Findval(msg, "new_node")+", and its app layer name is "+format.Findval(msg, "new_node_app_name"))
 				newPeersStr := format.Findval(msg, "known_peers")
 				// The network layer sends peer IDs, but the control layer works with full names.
 				// We need to reconstruct the full names from the IDs.
@@ -369,7 +300,66 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				c.child.SetVectorClock(newChildVC, newPeerNames)
 
 				format.Display_g(c.GetName(), "HandleMessage()", "Vector clocks resized to size "+strconv.Itoa(len(newPeerNames)))
+
+				// Now that the node is configured, request the state from a neighbor
+				var neighborToAsk string
+				for _, name := range newPeerNames {
+					if name != c.GetName() {
+						neighborToAsk = name
+						break
+					}
+				}
+				if neighborToAsk != "" {
+					format.Display_g(c.GetName(), "HandleMessage()", "Requesting application state from neighbor "+neighborToAsk)
+					c.SendControlMsg("", "empty", "state_request", neighborToAsk, "", c.GetName())
+				}
+
 				propagate_msg = false
+
+			case "state_request":
+				// A neighbor is requesting our state.
+				format.Display_g(c.GetName(), "HandleMessage()", "Received state request from "+sender_name_source)
+				appState := c.child.GetApplicationState()
+
+				// Serialize the state using gob
+				var buffer bytes.Buffer
+				encoder := gob.NewEncoder(&buffer)
+				if err := encoder.Encode(appState); err != nil {
+					format.Display_e(c.GetName(), "HandleMessage", "Failed to encode application state: "+err.Error())
+					return
+				}
+				// Encode the gob binary data into a text-safe base64 string
+				stateStr := base64.StdEncoding.EncodeToString(buffer.Bytes())
+
+				// Replace forward slashes with "REPLACE_BY_SLASH" in the state string to avoid issues with the message separator
+				stateStr = strings.ReplaceAll(stateStr, "/", "REPLACE_BY_SLASH")
+
+				c.SendControlMsg(stateStr, "recent_readings_state", "state_response", sender_name_source, "", c.GetName())
+
+			case "state_response":
+				format.Display_g(c.GetName(), "HandleMessage()", "Received state response from "+sender_name_source)
+				stateStr := format.Findval(msg, "content_value")
+
+				// Replace "REPLACE_BY_SLASH" with forward slashes in the state string
+				stateStr = strings.ReplaceAll(stateStr, "REPLACE_BY_SLASH", "/")
+
+				// Decode the base64 string back to gob binary data
+				stateBytes, err := base64.StdEncoding.DecodeString(stateStr)
+				if err != nil {
+					format.Display_e(c.GetName(), "HandleMessage", "Failed to decode base64 state: "+err.Error())
+					return
+				}
+
+				buffer := bytes.NewBuffer(stateBytes)
+				decoder := gob.NewDecoder(buffer)
+				var receivedState map[string][]models.Reading
+				if err := decoder.Decode(&receivedState); err != nil {
+					format.Display_e(c.GetName(), "HandleMessage", "Failed to decode application state: "+err.Error())
+					return
+				}
+
+				// Set the application state on the child node
+				c.child.SetApplicationState(receivedState)
 			}
 
 		} else if msg_destination == "verifiers" {
@@ -423,7 +413,6 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 
 	}
 }
-
 
 // resizeVC creates a new vector clock of a new size, preserving the values
 // from the old vector clock for sites that still exist.

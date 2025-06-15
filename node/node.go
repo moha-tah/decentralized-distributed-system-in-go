@@ -1,6 +1,7 @@
 package node
 
 import (
+	"distributed_system/models"
 	"distributed_system/utils"
 	"strconv"
 	"sync"
@@ -39,6 +40,12 @@ type Node interface {
 	SetVectorClock(newVC []int, siteNames []string)
 
 	GetLocalState() string
+
+	// GetApplicationState returns the application-specific state of the node.
+	GetApplicationState() map[string][]models.Reading
+
+	// SetApplicationState sets the application-specific state of the node.
+	SetApplicationState(state map[string][]models.Reading)
 }
 
 // BaseNode implements common functionality for all node types
@@ -49,10 +56,10 @@ type BaseNode struct {
 	isRunning        bool
 	ctrlLayer        *ControlLayer
 	nbMsgSent        int
-	clk              int   // Temporary variable for the vector clock
-	vectorClock      []int // taille = nombre total de noeuds
-	vectorClockReady bool  // true après pear_discovery_sealing
-	nodeIndex        int   // position de ce node dans le vecteur
+	clk              int         // Temporary variable for the vector clock
+	vectorClock      []int       // taille = nombre total de noeuds
+	vectorClockReady bool        // true après pear_discovery_sealing
+	nodeIndex        int         // position de ce node dans le vecteur
 	channel_to_ctrl  chan string // channel to send messages to the control layer
 }
 
@@ -121,6 +128,15 @@ func (n *BaseNode) SetVectorClock(newVC []int, siteNames []string) {
 
 func (n *BaseNode) GenerateUniqueMessageID() string {
 	return n.Type() + "_" + n.ID() + "_" + strconv.Itoa(n.NbMsgSent())
+}
+
+func (n *BaseNode) GetApplicationState() map[string][]models.Reading {
+	// Base implementation, should be overridden by child nodes.
+	return make(map[string][]models.Reading)
+}
+
+func (n *BaseNode) SetApplicationState(state map[string][]models.Reading) {
+	// Base implementation, should be overridden by child nodes.
 }
 
 func (n *BaseNode) InitVectorClockWithSites(siteNames []string) {

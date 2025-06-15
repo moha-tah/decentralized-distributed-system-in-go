@@ -335,7 +335,10 @@ func (v *VerifierNode) CheckUnverifiedItems() {
 	// Get the next unverified item
 	pendingItem := v.chooseReadingToVerify() // The item we want to process
 	v.mu.Lock()
-	itemID := pendingItem.ReadingID                        // Its ID
+	itemID := pendingItem.ReadingID // Its ID
+
+	// fmt.Println("CheckUnverifiedItems()", "itemID", itemID, "recentReadings", v.recentReadings[itemID], "senderID", pendingItem.SensorID, "recentReadings", v.recentReadings[pendingItem.SensorID])
+
 	var is_processingItem bool = v.processingItems[itemID] // Are we already processing it?
 	v.mu.Unlock()
 
@@ -400,14 +403,13 @@ func (v *VerifierNode) findUnverifiedReadings() {
 
 // requestLock starts the distributed locking protocol for an item
 func (v *VerifierNode) requestLock(reading models.Reading) {
+	itemID := reading.ReadingID
 
 	// If this is the only verifier, we can process the item directly
-	if v.nbOfVerifiers == 0 { // No other verifiers
-		go v.acquiredFullLockOnItem(reading.ReadingID)
+	if v.nbOfVerifiers == 0 {
+		go v.acquiredFullLockOnItem(itemID, reading.SensorID)
 		return
 	}
-
-	itemID := reading.ReadingID
 
 	v.mu.Lock()
 	// Initialize maps if needed
@@ -560,7 +562,7 @@ func (v *VerifierNode) handleLockReply(msg string) {
 	}
 	v.mu.Unlock()
 	if allReplied && canProcess {
-		go v.acquiredFullLockOnItem(itemID) // We can process the item
+		go v.acquiredFullLockOnItem(itemID, senderID) // We can process the item
 
 	} else if allReplied && !canProcess {
 		go v.cancelLockRequest(itemID) // We can cancel the lock request
@@ -609,7 +611,8 @@ func (v *VerifierNode) cancelLockRequest(itemID string) {
 // acquiredFullLockOnItem is called when the current node has full lock on an item,
 // meaning all other verifiers have granted the lock.
 // It needs to 1) say to the other verifiers that we have the lock, while 2) process the item.
-func (v *VerifierNode) acquiredFullLockOnItem(itemID string) {
+func (v *VerifierNode) acquiredFullLockOnItem(itemID string, senderID string) {
+
 	v.mu.Lock()
 	our_VC := utils.SerializeVectorClock(v.vectorClock)
 	v.mu.Unlock()
@@ -641,7 +644,7 @@ func (v *VerifierNode) acquiredFullLockOnItem(itemID string) {
 
 	v.mu.Unlock()
 
-	go v.processItem(itemID) // Process the item
+	go v.processItem(itemID, senderID) // Process the item
 }
 
 // handleLockAcquired processes a lock acquired message from another verifier
@@ -665,7 +668,7 @@ func (v *VerifierNode) handleLockAcquired(msg string) {
 }
 
 // processItem verifies an item after acquiring the lock
-func (v *VerifierNode) processItem(itemID string) {
+func (v *VerifierNode) processItem(itemID string, senderID string) {
 	// Remove from pending:
 	v.mu.Lock()
 	for i, item := range v.pendingItems {
@@ -678,7 +681,8 @@ func (v *VerifierNode) processItem(itemID string) {
 	v.mu.Unlock()
 
 	// Process the item - perform the verification
-	readingValue := v.getItemReadingValue(itemID)
+	readingValue := v.getItemReadingValue(itemID, senderID)
+	// readingValue := v.recentReadings[senderID]
 
 	// Clamp to acceptable range
 	clampedValue := v.clampToAcceptableRange(readingValue)
@@ -687,14 +691,14 @@ func (v *VerifierNode) processItem(itemID string) {
 	v.markItemAsVerified(itemID, clampedValue, "")
 
 	// Release the lock
-	v.releaseLock(itemID)
+	v.releaseLock(itemID, senderID)
 }
 
 // getItemReadingValue retrieves the reading value for an item
-func (v *VerifierNode) getItemReadingValue(itemID string) float32 {
-	value, err := v.getValueFromReadingID(itemID)
+func (v *VerifierNode) getItemReadingValue(itemID string, senderID string) float32 {
+	value, err := v.getValueFromReadingID(itemID, senderID)
 	if err != nil {
-		format.Display(format.Format_e(v.GetName(), "getItemReadingValue()", "Error getting value from item ID: "+itemID+".Err is:"+err.Error()))
+		format.Display(format.Format_e(v.GetName(), "getItemReadingValue()", "Error getting value from item ID: "+itemID+". Err is: "+err.Error()))
 		return 0.0
 	}
 	return value
@@ -777,7 +781,7 @@ func (v *VerifierNode) markItemAsVerified(itemID string, value float32, verifier
 }
 
 // releaseLock releases the lock on an item
-func (v *VerifierNode) releaseLock(itemID string) {
+func (v *VerifierNode) releaseLock(itemID string, senderID string) {
 	v.mu.Lock()
 	// Remove our processing status:
 	delete(v.processingItems, itemID)
@@ -802,13 +806,13 @@ func (v *VerifierNode) releaseLock(itemID string) {
 
 	// Notify other verifiers that we've released the lock.
 	// Use this message to also send the new item value.
-	itemValue, err := v.getValueFromReadingID(itemID)
+	itemValue, err := v.getValueFromReadingID(itemID, senderID)
 	if err != nil {
 		// If the item does not exist anymore, it means the queue erased it.
 		// So other verifiers will do them same, so no need to release the lock.
 		// If they didn't received the new reading so didn't erase the item in question,
 		// keeping the lock here will reduce useless messaging.
-		format.Display(format.Format_e(v.GetName(), "releaseLock()", "Error getting value from item ID: "+itemID+".Err is:"+err.Error()))
+		format.Display(format.Format_e(v.GetName(), "releaseLock()", "Error getting value from item ID: "+itemID+". Err is: "+err.Error()))
 		return
 	}
 
@@ -863,13 +867,19 @@ func (v *VerifierNode) handleLockRelease(msg string) {
 
 // getValueFromReadingID retrieves the temperature value from a reading ID
 // Assumption: itemID are in the format "senderID_index"
-func (v *VerifierNode) getValueFromReadingID(itemID string) (float32, error) {
-	// Split the item ID into sender ID and index
-	parts := strings.Split(itemID, "_")
-	if len(parts) != 2 {
-		return 0.0, fmt.Errorf("invalid item ID format")
+func (v *VerifierNode) getValueFromReadingID(itemID string, fixedSenderID string) (float32, error) {
+	var senderID string
+
+	if fixedSenderID != "" {
+		senderID = fixedSenderID
+	} else { // Get the sender ID from the item ID
+		// Split the item ID into sender ID and index
+		parts := strings.Split(itemID, "_")
+		if len(parts) != 2 {
+			return 0.0, fmt.Errorf("invalid item ID format")
+		}
+		senderID = parts[0]
 	}
-	senderID := parts[0]
 
 	// Check if the sender ID exists in the recent readings
 	// (function might be called with wrong sender ID). And then
@@ -958,4 +968,26 @@ func (n *VerifierNode) GetLocalState() string {
 	}
 	n.mu.Unlock()
 	return snap_content
+}
+
+func (v *VerifierNode) GetApplicationState() map[string][]models.Reading {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	// Deep copy of recentReadings to avoid race conditions
+	readingsCopy := make(map[string][]models.Reading)
+	for k, a := range v.recentReadings {
+		readingsCopy[k] = make([]models.Reading, len(a))
+		copy(readingsCopy[k], a)
+	}
+
+	return readingsCopy
+}
+
+func (v *VerifierNode) SetApplicationState(state map[string][]models.Reading) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	v.recentReadings = state
+	format.Display_g(v.GetName(), "SetApplicationState", "Successfully restored recentReadings.")
 }

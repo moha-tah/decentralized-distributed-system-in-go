@@ -86,7 +86,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 		rec_clk, _ := strconv.Atoi(rec_clk_str)
 		u.clk = utils.Synchronise(u.clk, rec_clk)
 		clk_int := u.clk
-		if u.vectorClockReady == true {
+		if u.vectorClockReady {
 			recVC := format.RetrieveVectorClock(msg, len(u.vectorClock))
 			u.vectorClock = utils.SynchroniseVectorClock(u.vectorClock, recVC, u.nodeIndex)
 		}
@@ -785,4 +785,30 @@ func (n *UserNode) GetLocalState() string {
 	}
 	n.mu.Unlock()
 	return snap_content
+}
+
+func (u *UserNode) GetApplicationState() map[string][]models.Reading {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	// Deep copy of recentReadings
+	readingsCopy := make(map[string][]models.Reading)
+	for k, a := range u.recentReadings {
+		readingsCopy[k] = make([]models.Reading, len(a))
+		copy(readingsCopy[k], a)
+	}
+
+	return readingsCopy
+}
+
+func (u *UserNode) SetApplicationState(state map[string][]models.Reading) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	u.recentReadings = state
+	format.Display_g(u.GetName(), "SetApplicationState", "Successfully restored recentReadings.")
+
+	// Initialize recentPredictions to be empty. It will be populated as new readings are processed.
+	u.recentPredictions = make(map[string][]float32)
+	format.Display_g(u.GetName(), "SetApplicationState", "Initialized recentPredictions as empty.")
 }

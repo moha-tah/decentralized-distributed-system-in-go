@@ -59,14 +59,12 @@ func (s *SensorNode) Start() error {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
-			// ✅ Incrémenter l’horloge vectorielle locale
+			// ✅ Incrémenter l'horloge vectorielle locale
 			s.mu.Lock()
 			s.clk += 1
 			s_clk_str := strconv.Itoa(s.clk)
-			// if s.vectorClockReady == false {
 			s.vectorClock[s.nodeIndex] += 1
 			s_VC_str := utils.SerializeVectorClock(s.vectorClock)
-			// }
 			s.mu.Unlock()
 
 			// Générer une lecture
