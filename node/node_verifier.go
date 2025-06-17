@@ -67,7 +67,6 @@ func (v *VerifierNode) Start() error {
 		v.isRunning = true
 	}()
 
-
 	// Start a goroutine to periodically check for unverified items
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
@@ -143,10 +142,10 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 		vectorClock, err := utils.SynchroniseVectorClock(v.vectorClock, recVC, v.nodeIndex)
 		if err != nil {
 			if len(v.vectorClock) == 0 || len(v.vectorClock) > len(recVC) {
-				v.vectorClock = recVC 
+				v.vectorClock = recVC
 			}
 		} else {
-			v.vectorClock = vectorClock 
+			v.vectorClock = vectorClock
 		}
 		// }
 		v.mu.Unlock()
@@ -867,7 +866,7 @@ func (v *VerifierNode) releaseLock(itemID string, senderID string) {
 	v.mu.Unlock()
 
 	// v.SendMessage(releaseMsg)
-	format.Display(format.Format_d(v.GetName(), "releaseLock()", "Releasing lock on item "+itemID+" with value "+strconv.FormatFloat(float64(itemValue), 'f', 2, 32) + "with VC "+our_VC))
+	format.Display(format.Format_d(v.GetName(), "releaseLock()", "Releasing lock on item "+itemID+" with value "+strconv.FormatFloat(float64(itemValue), 'f', 2, 32)+"with VC "+our_VC))
 	v.ctrlLayer.SendApplicationMsg(releaseMsg)
 
 	// v.ctrlLayer.SendControlMsg(strconv.FormatFloat(float64(itemValue), 'f', 2, 32), "verified_value", "lock_release_and_verified_value", "verifiers", "", v.GetName())
@@ -1034,8 +1033,5 @@ func (v *VerifierNode) SetApplicationState(state map[string][]models.Reading) {
 	format.Display_g(v.GetName(), "SetApplicationState", "Successfully restored recentReadings.")
 }
 
-
-
 func (n *VerifierNode) SetSnapshotInProgress(inProgress bool) {
-	return
 }

@@ -307,6 +307,35 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				// --- Update Child state ---
 				c.child.SetVectorClock(newChildVC, newPeerNames)
 
+				// --- Update verifier list if the new node is a verifier ---
+				newNodeAppName := format.Findval(msg, "new_node_app_name")
+				if strings.Contains(strings.ToLower(newNodeAppName), "verifier") {
+					c.mu.Lock()
+					if !slices.Contains(c.knownVerifierNames, newNodeAppName) {
+						c.knownVerifierNames = append(c.knownVerifierNames, newNodeAppName)
+						slices.Sort(c.knownVerifierNames)
+					}
+					verifiersStr := strings.Join(c.knownVerifierNames, utils.PearD_SITE_SEPARATOR)
+					c.mu.Unlock()
+
+					// Propager la nouvelle liste à la couche application si c'est un vérifieur
+					if c.child.Type() == "verifier" {
+						msg_to_verifier := format.Msg_format_multi(format.Build_msg_args(
+							"id", c.GenerateUniqueMessageID(),
+							"type", "pear_discovery_verifier",
+							"sender_name_source", c.GetName(),
+							"sender_name", c.GetName(),
+							"sender_type", "control",
+							"destination", c.child.GetName(),
+							"content_type", "siteNames",
+							"content_value", verifiersStr,
+							"clk", "", // mis à jour dans SendMsg
+							"vector_clock", "", // mis à jour dans SendMsg
+						))
+						c.SendMsg(msg_to_verifier, true) // vers application seulement
+					}
+				}
+
 				format.Display_g(c.GetName(), "HandleMessage()", "Vector clocks resized to size "+strconv.Itoa(len(newPeerNames)))
 				propagate_msg = false
 			case "joining_configuration":
@@ -357,6 +386,12 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				if neighborToAsk != "" {
 					format.Display_g(c.GetName(), "HandleMessage()", "Requesting application state from neighbor "+neighborToAsk)
 					c.SendControlMsg("", "empty", "state_request", neighborToAsk, "", c.GetName())
+
+					// Si le nouveau nœud est un vérifieur, demander la liste complète des vérifieurs
+					if c.child.Type() == "verifier" && neighborToAsk != "" {
+						format.Display_g(c.GetName(), "HandleMessage()", "Requesting verifiers list from neighbor "+neighborToAsk)
+						c.SendControlMsg("", "empty", "verifiers_request", neighborToAsk, "", c.GetName())
+					}
 				}
 
 				propagate_msg = false
@@ -402,6 +437,38 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 
 				// Set the application state on the child node
 				c.child.SetApplicationState(receivedState)
+
+			case "verifiers_request":
+				// A neighbor verifier is requesting the list of verifiers
+				verifiersStr := strings.Join(c.knownVerifierNames, utils.PearD_SITE_SEPARATOR)
+				c.SendControlMsg(verifiersStr, "verifier_names", "verifiers_response", sender_name_source, "", c.GetName())
+
+			case "verifiers_response":
+				// Réponse reçue : mettre à jour la liste puis transmettre au fils vérifieur
+				verifiersStr := format.Findval(msg, "content_value")
+				var verifiers []string
+				if verifiersStr != "" {
+					verifiers = strings.Split(verifiersStr, utils.PearD_SITE_SEPARATOR)
+				}
+				c.mu.Lock()
+				c.knownVerifierNames = verifiers
+				c.mu.Unlock()
+
+				if c.child.Type() == "verifier" {
+					msg_to_verifier := format.Msg_format_multi(format.Build_msg_args(
+						"id", c.GenerateUniqueMessageID(),
+						"type", "pear_discovery_verifier",
+						"sender_name_source", c.GetName(),
+						"sender_name", c.GetName(),
+						"sender_type", "control",
+						"destination", c.child.GetName(),
+						"content_type", "siteNames",
+						"content_value", verifiersStr,
+						"clk", "", // mis à jour dans SendMsg
+						"vector_clock", "", // mis à jour dans SendMsg
+					))
+					c.SendMsg(msg_to_verifier, true)
+				}
 			}
 
 		} else if msg_destination == "verifiers" {

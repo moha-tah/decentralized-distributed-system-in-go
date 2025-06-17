@@ -105,7 +105,9 @@ func (c *ControlLayer) SendMsg(msg string, through_channelArgs ...bool) {
 
 	c.mu.Lock()
 	if c.vectorClockReady {
-		c.vectorClock[c.nodeIndex] += 1 // Incrément de l'horloge vectorielle locale
+		if len(c.vectorClock) > c.nodeIndex {
+			c.vectorClock[c.nodeIndex] += 1 // Incrément de l'horloge vectorielle locale
+		}
 		msg = format.AddOrReplaceFieldToMessage(msg, "vector_clock", utils.SerializeVectorClock(c.vectorClock))
 	} else {
 		format.Display_w(c.GetName(), "SendMsg()", "Vector clock not ready, using local clock only")
