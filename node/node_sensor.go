@@ -192,6 +192,10 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 		vcStr := format.Findval(msg, "vector_clock")
 		recvVC, err := utils.DeserializeVectorClock(vcStr)
 
+		if len(recvVC) != len(s.vectorClock) {
+			recvVC = append(recvVC, make([]int, len(s.vectorClock)-len(recvVC))...)
+		}
+
 		// 🔁 Mettre à jour le vector clock à la réception
 		s.mu.Lock()
 		if s.vectorClockReady {
@@ -199,7 +203,9 @@ func (s *SensorNode) HandleMessage(channel chan string) {
 				for i := 0; i < len(s.vectorClock); i++ {
 					s.vectorClock[i] = utils.Max(s.vectorClock[i], recvVC[i])
 				}
-				s.vectorClock[s.nodeIndex] += 1
+				if len(s.vectorClock) > s.nodeIndex {
+					s.vectorClock[s.nodeIndex] += 1
+				}
 			}
 		}
 		recClk, _ := strconv.Atoi(format.Findval(msg, "clk"))
@@ -253,5 +259,4 @@ func (n *SensorNode) GetLocalState() string {
 }
 
 func (n *SensorNode) SetSnapshotInProgress(inProgress bool) {
-	return
 }
