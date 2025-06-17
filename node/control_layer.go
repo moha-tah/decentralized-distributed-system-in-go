@@ -147,7 +147,6 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 		if c.SawThatMessageBefore(msg) {
 			return
 		}
-		format.Display_d(c.GetName(), "HandleMessage()", "Message is : "+msg)
 
 		// Receiving operations: update the vector clock and the logical clock
 		c.mu.Lock()

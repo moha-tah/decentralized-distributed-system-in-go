@@ -338,15 +338,7 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
 		msg := scanner.Text()
-		if format.Findval(msg, "type") =="lock_reply" {
-			format.Display_network(n.GetName(), "handleConnection()", "Received lock reply message from "+format.Findval(msg, "sender_name_source") + "for item ID " + format.Findval(msg, "item_id") + " with message id " + format.Findval(msg, "id"))
-			format.Display_network(n.GetName(), "handleConnection()", "Message content: "+msg)
-		}
 		if n.SawThatMessageBefore(msg) {
-
-			if format.Findval(msg, "type") =="lock_reply" {
-				format.Display_network(n.GetName(), "handleConnection()", "Already received lock reply message from "+format.Findval(msg, "sender_name_source") + "for item ID " + format.Findval(msg, "item_id") + " with message id " + format.Findval(msg, "id"))
-			}
 			break
 		}
 
