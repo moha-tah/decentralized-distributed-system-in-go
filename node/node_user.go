@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"distributed_system/format"
 	"distributed_system/models"
 	"distributed_system/utils"
@@ -19,16 +20,16 @@ import (
 // UserNode represents a user in the system
 type UserNode struct {
 	BaseNode
-	predictionFunc    func(values []float32, decay float32) float32
-	model             string                      // Model type (linear or exponential)
-	decayFactor       float32                     // Decay factor in some prediction functions
-	lastPrediction    *float32                    // pointer to allow nil value at start
-	recentReadings    map[string][]models.Reading // FIFO queue per sender
-	recentPredictions map[string][]float32        // FIFO queue per sender of made predictions
-	verifiedItemIDs   map[string][]string         // Tracks the verified item for each sender by their ID
-	httpServer        *http.Server                // HTTP server for web UI
-	port              int                         // HTTP server port
-	snapshotInProgress bool 
+	predictionFunc     func(values []float32, decay float32) float32
+	model              string                      // Model type (linear or exponential)
+	decayFactor        float32                     // Decay factor in some prediction functions
+	lastPrediction     *float32                    // pointer to allow nil value at start
+	recentReadings     map[string][]models.Reading // FIFO queue per sender
+	recentPredictions  map[string][]float32        // FIFO queue per sender of made predictions
+	verifiedItemIDs    map[string][]string         // Tracks the verified item for each sender by their ID
+	httpServer         *http.Server                // HTTP server for web UI
+	port               int                         // HTTP server port
+	snapshotInProgress bool
 }
 
 // NewUserNode creates a new user node
@@ -46,15 +47,15 @@ func NewUserNode(id string, model string, port int) *UserNode {
 	}
 
 	return &UserNode{
-		BaseNode:          NewBaseNode(id, "user"),
-		predictionFunc:    predFunction,
-		model:             model,
-		decayFactor:       decayFactor,
-		lastPrediction:    nil,
-		recentReadings:    make(map[string][]models.Reading),
-		recentPredictions: make(map[string][]float32),
-		verifiedItemIDs:   make(map[string][]string),
-		port:              port,
+		BaseNode:           NewBaseNode(id, "user"),
+		predictionFunc:     predFunction,
+		model:              model,
+		decayFactor:        decayFactor,
+		lastPrediction:     nil,
+		recentReadings:     make(map[string][]models.Reading),
+		recentPredictions:  make(map[string][]float32),
+		verifiedItemIDs:    make(map[string][]string),
+		port:               port,
 		snapshotInProgress: false,
 	}
 }
@@ -97,7 +98,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 
 		if !u.isRunning {
 			u.mu.Unlock()
-			continue 
+			continue
 		}
 
 		rec_clk_str := format.Findval(msg, "clk")
@@ -110,7 +111,7 @@ func (u *UserNode) HandleMessage(channel chan string) {
 			u.vectorClock = vectorClock
 			if err != nil {
 				if len(u.vectorClock) == 0 || len(u.vectorClock) > len(recVC) {
-					u.vectorClock = recVC 
+					u.vectorClock = recVC
 				}
 			}
 		}
@@ -179,6 +180,19 @@ func (u *UserNode) HandleMessage(channel chan string) {
 			u.processDatabse()
 		case "lock_release_and_verified_value":
 			go u.handleLockRelease(msg)
+
+		case "disconnect_confirmation":
+			format.Display(format.Format_d("node_user.go", "HandleMessage()",
+				"Received disconnect confirmation"))
+			// Commencer le nettoyage
+			go func() {
+				time.Sleep(2 * time.Second) // Délai pour s'assurer que tous les messages sont traités
+				u.Cleanup()
+				format.Display(format.Format_d("node_user.go", "HandleMessage()",
+					"Node "+u.GetName()+" successfully disconnected"))
+				// Ici vous pourriez déclencher l'arrêt complet du processus si nécessaire
+				// os.Exit(0)
+			}()
 
 		case "snapshot_request":
 			format.Display(format.Format_d(
@@ -310,7 +324,6 @@ func (n *UserNode) handleLockRelease(msg string) {
 				need_to_add = false
 			}
 		}
-		
 
 		if need_to_add {
 			// Get or create the queue for the sender
@@ -350,9 +363,6 @@ func (n *UserNode) handleLockRelease(msg string) {
 			})
 			n.recentReadings[sensorID] = queue // Update the map
 			n.mu.Unlock()
-
-
-
 
 		} else {
 
@@ -490,7 +500,6 @@ func (u *UserNode) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	u.mu.Unlock()
 	u.ctrlLayer.RequestSnapshot()
 
-	
 	timeWaited := 0
 	maxWait := 3 * time.Second // Maximum wait time for snapshot to complete
 	for snapshotInProgress {
@@ -644,6 +653,7 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
         <h1>` + u.GetName() + ` (` + u.model + `) Dashboard</h1>
         <button class="refresh-button" onclick="fetchData()">Refresh Data</button>
         <button class="refresh-button" onclick="takeSnapshot()">📷 Take snapshot</button>
+		<button class="refresh-button" id="logout-button" onclick="logout()">🚪 Déconnexion</button>
         <div id="last-updated" class="timestamp"></div>
 	<div class="chart-container">
 	    <h2>Recent Predictions</h2>
@@ -791,6 +801,39 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
             }
         }
     }
+		function logout() {
+			const logoutButton = document.getElementById('logout-button');
+			if (!confirm('Êtes-vous sûr de vouloir vous déconnecter ? Cette action fermera votre nœud.')) {
+				return;
+			}
+			logoutButton.disabled = true;
+			logoutButton.textContent = '⏳ Déconnexion...';
+
+			fetch('/api/disconnect', {
+				method: 'POST',
+				headers: {'Content-Type': 'application/json'},
+				body: JSON.stringify({timestamp: new Date().toISOString()})
+			})
+			.then(response => {
+				if (!response.ok) throw new Error("HTTP error! status: ${response.status}");
+				return response.json();
+			})
+			.then(data => {
+				showDisconnectMessage('✅ Déconnexion initiée avec succès. Fermeture en cours...', 'success');
+				disableAllInteractions();
+				setTimeout(() => {
+					window.close();
+					window.location.href = 'about:blank';
+				}, 3000);
+			})
+			.catch(error => {
+				logoutButton.disabled = false;
+				logoutButton.textContent = '🚪 Déconnexion';
+				showDisconnectMessage('❌ Erreur lors de la déconnexion: ' + error.message, 'error');
+			});
+		}
+
+		
 
         // Fetch data from the API and update the UI
         function fetchData() {
@@ -986,4 +1029,88 @@ func (u *UserNode) SetApplicationState(state map[string][]models.Reading) {
 	// Initialize recentPredictions to be empty. It will be populated as new readings are processed.
 	u.recentPredictions = make(map[string][]float32)
 	format.Display_g(u.GetName(), "SetApplicationState", "Initialized recentPredictions as empty.")
+}
+
+func (u *UserNode) InitiateDisconnection() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	if !u.isRunning {
+		return fmt.Errorf("node is not running")
+	}
+
+	format.Display(format.Format_d("node_user.go", "InitiateDisconnection()",
+		"User "+u.GetName()+" initiating disconnection"))
+
+	// Marquer le nœud comme étant en cours de déconnexion
+	u.isRunning = false
+
+	// Envoyer un message de déconnexion via la couche de contrôle
+	msgID := u.GenerateUniqueMessageID()
+	disconnectMsg := format.Msg_format_multi(format.Build_msg_args(
+		"id", msgID,
+		"type", "node_disconnect_request",
+		"sender_name", u.GetName(),
+		"sender_name_source", u.GetName(),
+		"sender_type", u.Type(),
+		"destination", "control", // Message pour toutes les couches de contrôle
+		"clk", strconv.Itoa(u.clk),
+		"vector_clock", utils.SerializeVectorClock(u.vectorClock),
+		"content_type", "disconnect_notification",
+		"content_value", u.ctrlLayer.GetName(), // Nom de la couche de contrôle associée
+		"propagation", "true", // Assurer la propagation
+	))
+
+	// Envoyer le message de déconnexion
+	u.SendMessage(disconnectMsg)
+
+	format.Display(format.Format_d("node_user.go", "InitiateDisconnection()",
+		"Disconnect request sent by "+u.GetName()))
+
+	return nil
+}
+
+func (u *UserNode) Cleanup() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	format.Display(format.Format_d("node_user.go", "Cleanup()",
+		"Cleaning up resources for "+u.GetName()))
+
+	// Arrêter le serveur HTTP s'il existe
+	if u.httpServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		u.httpServer.Shutdown(ctx)
+	}
+
+	// Vider les données locales
+	u.recentReadings = make(map[string][]models.Reading)
+	u.recentPredictions = make(map[string][]float32)
+	u.verifiedItemIDs = make(map[string][]string)
+
+	u.isRunning = false
+}
+
+func (u *UserNode) handleDisconnectRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	format.Display(format.Format_d("node_user.go", "handleDisconnectRequest()",
+		"Disconnect request received from web interface"))
+
+	err := u.InitiateDisconnection()
+	if err != nil {
+		http.Error(w, "Failed to initiate disconnection: "+err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": "Disconnection initiated successfully",
+	})
 }

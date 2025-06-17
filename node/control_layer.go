@@ -154,7 +154,7 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 			vectorClock, err := utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
 			if err != nil {
 				if len(c.vectorClock) == 0 || len(c.vectorClock) > len(recVC) {
-					c.vectorClock = recVC 
+					c.vectorClock = recVC
 				}
 			} else {
 				c.vectorClock = vectorClock
@@ -192,6 +192,9 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 		} else if msg_destination == "control" { // Control logic operations
 			switch msg_type {
 
+			case "node_disconnect_request":
+				c.handleNodeDisconnectRequest(msg)
+
 			case "neighbor_discovery":
 
 				msg_to_neighbor := format.Msg_format_multi(format.Build_msg_args(
@@ -226,6 +229,10 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 			switch msg_type {
 			case "pear_discovery_answer":
 				c.HandlePearDiscoveryAnswerFromResponsibleNode(msg)
+
+			case "node_disconnect_notification":
+				c.handleDirectDisconnectNotification(msg)
+
 			case "neighbor_discovery_answer":
 				already_discovered := slices.Contains(c.directNeighbors, sender_name_source)
 				if !already_discovered {
@@ -304,7 +311,7 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				c.knownSiteNames = newPeerNames
 				c.nbOfKnownSites = len(newPeerNames)
 				c.vectorClock = newControlVC
-				c.vectorClockReady = true 
+				c.vectorClockReady = true
 				c.nodeIndex = utils.FindIndex(c.GetName(), newPeerNames)
 				c.mu.Unlock()
 
@@ -447,5 +454,158 @@ func resizeVC(oldVC []int, oldSites []string, newSites []string) []int {
 			newVC[i] = 0
 		}
 	}
+	return newVC
+}
+
+func (c *ControlLayer) handleNodeDisconnectRequest(msg string) {
+	disconnectingNode := format.Findval(msg, "sender_name_source")
+	disconnectingControlLayer := format.Findval(msg, "content_value")
+
+	format.Display(format.Format_d(c.GetName(), "handleNodeDisconnectRequest()",
+		"Processing disconnect request from "+disconnectingNode))
+
+	// Envoyer une notification directe au nœud qui se déconnecte
+	c.sendDisconnectConfirmation(disconnectingControlLayer)
+
+	// Propager l'information aux autres nœuds
+	c.propagateDisconnectNotification(disconnectingNode, disconnectingControlLayer)
+
+	// Mettre à jour la liste des sites connus localement
+	c.updateKnownSitesAfterDisconnect(disconnectingControlLayer)
+}
+
+// handleDirectDisconnectNotification traite une notification de déconnexion reçue directement
+func (c *ControlLayer) handleDirectDisconnectNotification(msg string) {
+	disconnectingNode := format.Findval(msg, "sender_name_source")
+	disconnectingControlLayer := format.Findval(msg, "content_value")
+
+	format.Display(format.Format_d(c.GetName(), "handleDirectDisconnectNotification()",
+		"Received disconnect notification for "+disconnectingNode))
+
+	// Mettre à jour la liste des sites connus
+	c.updateKnownSitesAfterDisconnect(disconnectingControlLayer)
+}
+
+// sendDisconnectConfirmation envoie une confirmation de déconnexion
+func (c *ControlLayer) sendDisconnectConfirmation(targetControlLayer string) {
+	confirmationMsg := format.Msg_format_multi(format.Build_msg_args(
+		"id", c.GenerateUniqueMessageID(),
+		"type", "disconnect_confirmation",
+		"sender_name_source", c.GetName(),
+		"sender_name", c.GetName(),
+		"sender_type", "control",
+		"destination", targetControlLayer,
+		"clk", "", // sera mis à jour dans SendMsg
+		"vector_clock", "", // sera mis à jour dans SendMsg
+		"content_type", "confirmation",
+		"content_value", "disconnect_acknowledged",
+		"propagation", "false", // Pas de propagation pour la confirmation
+	))
+
+	c.SendMsg(confirmationMsg)
+}
+
+// propagateDisconnectNotification propage l'information de déconnexion
+func (c *ControlLayer) propagateDisconnectNotification(disconnectingNode, disconnectingControlLayer string) {
+	notificationMsg := format.Msg_format_multi(format.Build_msg_args(
+		"id", c.GenerateUniqueMessageID(),
+		"type", "node_disconnect_notification",
+		"sender_name_source", c.GetName(),
+		"sender_name", c.GetName(),
+		"sender_type", "control",
+		"destination", "control", // Pour toutes les couches de contrôle
+		"clk", "", // sera mis à jour dans SendMsg
+		"vector_clock", "", // sera mis à jour dans SendMsg
+		"content_type", "disconnect_info",
+		"content_value", disconnectingControlLayer,
+		"disconnecting_node", disconnectingNode,
+		"propagation", "true",
+	))
+
+	c.SendMsg(notificationMsg)
+}
+
+// updateKnownSitesAfterDisconnect met à jour la liste des sites après une déconnexion
+func (c *ControlLayer) updateKnownSitesAfterDisconnect(disconnectingControlLayer string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Sauvegarder l'ancienne configuration
+	oldSiteNames := make([]string, len(c.knownSiteNames))
+	copy(oldSiteNames, c.knownSiteNames)
+	oldVectorClock := make([]int, len(c.vectorClock))
+	copy(oldVectorClock, c.vectorClock)
+
+	// Retirer le nœud déconnecté de la liste
+	newSiteNames := make([]string, 0)
+	for _, site := range c.knownSiteNames {
+		if site != disconnectingControlLayer {
+			newSiteNames = append(newSiteNames, site)
+		}
+	}
+
+	if len(newSiteNames) == len(oldSiteNames) {
+		// Le nœud n'était pas dans notre liste
+		format.Display(format.Format_d(c.GetName(), "updateKnownSitesAfterDisconnect()",
+			"Node "+disconnectingControlLayer+" was not in known sites list"))
+		return
+	}
+
+	// Mettre à jour les sites connus
+	c.knownSiteNames = newSiteNames
+	c.nbOfKnownSites = len(newSiteNames)
+
+	// Redimensionner et mettre à jour l'horloge vectorielle
+	c.vectorClock = resizeVCAfterDisconnect(oldVectorClock, oldSiteNames, newSiteNames)
+	c.nodeIndex = utils.FindIndex(c.GetName(), newSiteNames)
+
+	// Mettre à jour l'horloge vectorielle de l'enfant
+	childOldVC := c.child.GetVectorClock()
+	childNewVC := resizeVCAfterDisconnect(childOldVC, oldSiteNames, newSiteNames)
+	c.child.SetVectorClock(childNewVC, newSiteNames)
+
+	format.Display(format.Format_d(c.GetName(), "updateKnownSitesAfterDisconnect()",
+		"Updated configuration: "+strconv.Itoa(len(oldSiteNames))+" -> "+strconv.Itoa(len(newSiteNames))+" sites"))
+
+	// Nettoyer les voisins directs
+	c.removeFromDirectNeighbors(disconnectingControlLayer)
+}
+
+// removeFromDirectNeighbors retire un nœud de la liste des voisins directs
+func (c *ControlLayer) removeFromDirectNeighbors(disconnectedNode string) {
+	newNeighbors := make([]string, 0)
+	for _, neighbor := range c.directNeighbors {
+		if neighbor != disconnectedNode {
+			newNeighbors = append(newNeighbors, neighbor)
+		}
+	}
+	c.directNeighbors = newNeighbors
+}
+
+// resizeVCAfterDisconnect redimensionne l'horloge vectorielle après une déconnexion
+func resizeVCAfterDisconnect(oldVC []int, oldSites, newSites []string) []int {
+	if len(oldVC) == 0 {
+		return make([]int, len(newSites))
+	}
+
+	newVC := make([]int, len(newSites))
+
+	for i, newSite := range newSites {
+		// Trouver l'index de ce site dans l'ancienne configuration
+		oldIndex := -1
+		for j, oldSite := range oldSites {
+			if oldSite == newSite {
+				oldIndex = j
+				break
+			}
+		}
+
+		if oldIndex != -1 && oldIndex < len(oldVC) {
+			newVC[i] = oldVC[oldIndex]
+		} else {
+			newVC[i] = 0
+		}
+	}
+
 	return newVC
 }
