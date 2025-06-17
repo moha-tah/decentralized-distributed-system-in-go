@@ -1036,23 +1036,27 @@ func (u *UserNode) SetApplicationState(state map[string][]models.Reading) {
 }
 
 func (u *UserNode) Logout() {
-	format.Display_g(u.GetName(), "Logout", "Début de la méthode Logout()")
-
 	u.mu.Lock()
 	if !u.isRunning {
 		u.mu.Unlock()
-		format.Display_g(u.GetName(), "Logout", "Node déjà arrêté, sortie")
 		return
 	}
 	u.isRunning = false
 	u.mu.Unlock()
 
-	// Envoie le message logout au control layer
+	// Prévenir voisins via ControlLayer
 	u.ctrlLayer.SendLogoutAnnouncement()
 	u.ctrlLayer.SendConnectNeighbors()
 
-	format.Display_g(u.GetName(), "Logout", "Messages logout envoyés, fin de Logout()")
-	// Optionnel : fermer canaux, connexions, etc.
+	// Fermer canal vers ControlLayer (channel_to_ctrl)
+	if u.channel_to_ctrl != nil {
+		close(u.channel_to_ctrl)
+	}
+
+	// Notifier ControlLayer que User se déconnecte
+	u.ctrlLayer.NotifyUserLogout()
+
+	format.Display_g(u.GetName(), "Logout", "User node logged out and notified ControlLayer")
 }
 
 func (u *UserNode) LogoutHandler(w http.ResponseWriter, r *http.Request) {

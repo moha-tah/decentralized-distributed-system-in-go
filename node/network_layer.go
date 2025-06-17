@@ -851,3 +851,29 @@ func (n *NetworkLayer) ConnectToNeighbor(neighborID int, neighborID_to_remove in
 
 	return nil
 }
+
+func (n *NetworkLayer) Cleanup() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	// Exemple si tu as un canal vers control layer
+	if n.channel_to_control != nil {
+		close(n.channel_to_control)
+	}
+
+	format.Display_g(n.GetName(), "Cleanup", "NetworkLayer cleaned up")
+}
+
+func (n *NetworkLayer) NotifyControlLogout() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	format.Display_g(n.GetName(), "NotifyControlLogout", "NetworkLayer notified of ControlLayer logout")
+
+	// Fermer canal vers ControlLayer (channel_to_control)
+	if n.channel_to_control != nil {
+		close(n.channel_to_control)
+	}
+
+	format.Display_g(n.GetName(), "NotifyControlLogout", "NetworkLayer cleaned up")
+}

@@ -544,3 +544,14 @@ func (c *ControlLayer) SendConnectNeighbors() {
 
 	c.networkLayer.SetDown(true)
 }
+
+func (c *ControlLayer) NotifyUserLogout() {
+	// Pas de fermeture de canal ici, juste notification
+
+	format.Display_g(c.GetName(), "NotifyUserLogout", "ControlLayer notified of User logout")
+
+	// Notifier NetworkLayer
+	if c.networkLayer != nil {
+		c.networkLayer.NotifyControlLogout()
+	}
+}
