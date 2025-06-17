@@ -51,6 +51,8 @@ type NetworkLayer struct {
 	electedLeader          int    // ID of the elected leader, if any
 	nodeRequestingElection string // Name of the node requesting the election, if any
 	// waitingConn 		net.Conn	// Connection to the node that is waiting for admission
+
+	down 			bool // True if the node is down (disconntectionc)
 }
 
 func NewNetworkLayer(id, nodeType string, appNode *Node, controlLayer *ControlLayer, peers_int []string) NetworkLayer {
@@ -86,6 +88,8 @@ func NewNetworkLayer(id, nodeType string, appNode *Node, controlLayer *ControlLa
 		electionParentID: -1, // No parent by default
 		expectedAnswers:  -1,
 		electedLeader:    -1,
+
+		down: false, // Node is up by default
 	}
 }
 
@@ -221,6 +225,11 @@ func (n *NetworkLayer) StartControlLayer(firstnode_arg ...bool) {
 // - dest_id: the ID of the destination node. Use -1 to send to all active connections
 // - toCtrlLayerArg: if true, the message is sent to the control layer instead of the network layers
 func (n *NetworkLayer) SendMessage(msg string, dest_id int, toCtrlLayerArg ...bool) int {
+
+	if n.down {
+		return 1
+	}
+
 	toCtrlLayer := false
 	if len(toCtrlLayerArg) > 0 && toCtrlLayerArg[0] {
 		toCtrlLayer = true
@@ -321,6 +330,11 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 
 	n.mu.Lock()
 
+	if n.down {
+		n.mu.Unlock()
+		return
+	}
+
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
 		msg := scanner.Text()
@@ -341,6 +355,7 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 		// (no propagation for admission messages that are handled separately)
 
 		msg_type := format.Findval(msg, "type")
+
 		if msg_type == "admission_request" && !n.electionInProgress && !n.waitingForAdmission {
 			n.handleAdmissionRequest(msg, conn)
 		} else if msg_type == "admission_granted" {
@@ -352,6 +367,9 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 		} else if msg_type == "snapshot" {
 			n.AskSnapshotControlAndPropagateSnapshotRequest(msg, peer_id_str)
 			canPropagateMessage = false // Propagation handled in AskSnapshotControlAndPropagateSnapshotRequest
+		} else if msg_type == "connect_neighbors" {
+			n.channel_to_control <- msg 
+			canPropagateMessage = false
 		} else {
 			msg_destination := format.Findval(msg, "destination")
 			msg_destination_id, _ := strconv.Atoi(msg_destination)
@@ -363,7 +381,7 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 				// it is a message for me.the upper layers. => Pass to control layer
 				// go n.controlLayer.HandleMessage(msg)
 				n.channel_to_control <- msg // Send the message to the control layer through the channel
-			} else if format.Findval(msg, "destination") == n.controlLayer.GetName() {
+			} else if msg_destination == n.controlLayer.GetName() {
 				// go n.controlLayer.HandleMessage(msg)
 				n.channel_to_control <- msg // Send the message to the control layer through the channel
 				canPropagateMessage = false
@@ -384,12 +402,28 @@ func (n *NetworkLayer) MessageFromControlLayer(msg string) {
 	idToAvoid := "-1"
 	if format.Findval(msg, "type") == "snapshot" {
 		idToAvoid = strconv.Itoa(n.activeNeighborsIDs[0])
+	} else if format.Findval(msg, "type") == "connect_neighbors" {
+		// Only send to the destination neighbor:
+		msg_dest_id := format.Findval(msg, "destination")
+		if msg_dest_id == strconv.Itoa(n.activeNeighborsIDs[0]) {
+			idToAvoid = strconv.Itoa(n.activeNeighborsIDs[1])
+		} else {
+			idToAvoid = strconv.Itoa(n.activeNeighborsIDs[0]) 
+		}
 	}
 	format.Display_network(n.GetName(), "MessageFromControlLayer()", "Propagating message of control layer to all active connections.")
 	msg = format.AddOrReplaceFieldToMessage(msg, "sender_name_source", n.controlLayer.GetName())
-	msg = format.AddOrReplaceFieldToMessage(msg, "propagation", "true") // Set propagation to true
+	if format.Findval(msg, "propagation") == "" {
+		msg = format.AddOrReplaceFieldToMessage(msg, "propagation", "true") // Set propagation to true by default
+	}
 	n.mu.Lock()
 	n.propagateMessage(msg, idToAvoid)
+	n.mu.Unlock()
+}
+
+func (n* NetworkLayer) SetDown(down bool) {
+	n.mu.Lock()
+	n.down = n.down
 	n.mu.Unlock()
 }
 
@@ -791,25 +825,38 @@ func (n *NetworkLayer) AddNewMessageId(sender_name string, MID_str string) {
 // 	return -1 // pas trouvé
 // }
 
-// func (n *NetworkLayer) ConnectToNeighbor(neighborName string) error {
-// 	neighborID := n.getNodeIDFromName(neighborName)
-// 	if neighborID == -1 {
-// 		return fmt.Errorf("Neighbor ID not found for %s", neighborName)
-// 	}
+func (n *NetworkLayer) ConnectToNeighbor(neighborID int, neighborID_to_remove int) error {
+	format.Display_e(n.GetName(), "ConnectToNeighbor()", fmt.Sprintf("Connecting to neighbor with ID %d, replacing old neighbor ID %d", neighborID, neighborID_to_remove))
+	address := "localhost:" + strconv.Itoa(9000+neighborID)
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		format.Display_e(n.GetName(), "ConnectToNeighbor", "Failed to connect to "+strconv.Itoa(neighborID)+": "+err.Error())
+		return err
+	}
+	conn.Close()
 
-// 	address := "localhost:" + strconv.Itoa(9000+neighborID)
-// 	conn, err := net.Dial("tcp", address)
-// 	if err != nil {
-// 		format.Display_e(n.GetName(), "ConnectToNeighbor", "Failed to connect to "+neighborName+": "+err.Error())
-// 		return err
-// 	}
+	// Optionnel : stocker la connexion pour réutilisation
+	// n.activeConns[neighborName] = conn
+	
+	// Find old neighbor index and replace it with new neighbor ID 
+	n.mu.Lock()
+	index := slices.Index(n.activeNeighborsIDs, neighborID_to_remove)
+	n.mu.Unlock()
+	if index != -1 {
+		n.mu.Lock()
+		n.activeNeighborsIDs[index] = neighborID // Replace old neighbor ID with new one
+		n.mu.Unlock()
+	} else {
+		activeneighbors_str := ""
+		for _, nid := range n.activeNeighborsIDs {
+			activeneighbors_str += strconv.Itoa(nid) + ", "
+		}
+		format.Display_e(n.GetName(), "ConnectToNeighbor", "Old neighbor ID "+strconv.Itoa(neighborID_to_remove)+" not found in active neighbors: "+activeneighbors_str)
+	}
 
-// 	// Optionnel : stocker la connexion pour réutilisation
-// 	// n.activeConns[neighborName] = conn
+	format.Display_g(n.GetName(), "ConnectToNeighbor", "Connected to neighbor "+strconv.Itoa(neighborID)+" at "+address)
 
-// 	format.Display_g(n.GetName(), "ConnectToNeighbor", "Connected to neighbor "+neighborName+" at "+address)
+	// go n.handleConnection(conn)
 
-// 	go n.handleConnection(conn)
-
-// 	return nil
-// }
+	return nil
+}

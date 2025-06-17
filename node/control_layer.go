@@ -139,6 +139,8 @@ func (c *ControlLayer) Start() error {
 func (c *ControlLayer) HandleMessage(channel chan string) {
 
 	for msg := range channel {
+
+
 		format.Display_d(c.GetName(), "HandleMessage()", "Received message of type: "+format.Findval(msg, "type")+" by "+format.Findval(msg, "sender_name_source")+" through node "+format.Findval(msg, "sender_name")+"to destination "+format.Findval(msg, "destination"))
 		// It might happen eg. in a bidirectionnal ring.
 		// If it is the case (= duplicate) => ignore.
@@ -222,28 +224,31 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				c.processBlueTree(msg)
 
 			}
-		} else if msg_destination == c.GetName() { // The msg is only for the current node
+		} else if msg_destination == c.GetName() || msg_destination == strings.Split(c.id, "_")[0] { // The msg is only for the current node
 			switch msg_type {
 
-			// case "connect_neighbors":
-			// 	connectTo := format.Findval(msg, "connect_to")
-			// 	format.Display_g(c.GetName(), "HandleMessage()", "Connect to "+connectTo)
+			case "connect_neighbors":
+				connectTo := format.Findval(msg, "connect_to")
 
-			// 	// Met à jour la liste des voisins dans ControlLayer
-			// 	for i, neighbor := range c.directNeighbors {
-			// 		if neighbor == format.Findval(msg, "sender_name_source") {
-			// 			c.directNeighbors[i] = connectTo
-			// 			break
-			// 		}
-			// 	}
+				// Met à jour la liste des voisins dans ControlLayer
+				c.mu.Lock()
+				for i, neighbor := range c.directNeighbors {
+					if neighbor == format.Findval(msg, "sender_name_source") {
+						c.directNeighbors[i] = connectTo
+						break
+					}
+				}
+				c.mu.Unlock()
 
-			// 	// Demande au NetworkLayer d'établir la connexion TCP
-			// 	if c.networkLayer != nil {
-			// 		err := c.networkLayer.ConnectToNeighbor(connectTo)
-			// 		if err != nil {
-			// 			format.Display_e(c.GetName(), "HandleMessage", "Failed to connect to neighbor "+connectTo)
-			// 		}
-			// 	}
+				// Demande au NetworkLayer d'établir la connexion TCP
+				if c.networkLayer != nil {
+					sender_id_to_disconnect, _ := strconv.Atoi(format.Findval(msg, "sender_id"))
+					connectToInt, _ := strconv.Atoi(connectTo)
+					err := c.networkLayer.ConnectToNeighbor(connectToInt, sender_id_to_disconnect)
+					if err != nil {
+						format.Display_e(c.GetName(), "HandleMessage", "Failed to connect to neighbor "+connectTo)
+					}
+				}
 			case "pear_discovery_answer":
 				c.HandlePearDiscoveryAnswerFromResponsibleNode(msg)
 
@@ -471,54 +476,64 @@ func resizeVC(oldVC []int, oldSites []string, newSites []string) []int {
 	return newVC
 }
 
-// func (c *ControlLayer) SendLogoutAnnouncement() {
-// 	logoutMsg := format.Msg_format_multi(format.Build_msg_args(
-// 		"id", c.GenerateUniqueMessageID(),
-// 		"type", "logout_announcement",
-// 		"sender_name_source", c.GetName(),
-// 		"sender_name", c.GetName(),
-// 		"sender_type", "control",
-// 		"destination", "", // sera remplacé pour chaque voisin
-// 		"content_value", "Node "+c.GetName()+" is disconnecting",
-// 		"propagation", "false",
-// 	))
+func (c *ControlLayer) SendLogoutAnnouncement() {
 
-// 	for _, neighbor := range c.directNeighbors {
-// 		msg := format.Replaceval(logoutMsg, "destination", neighbor)
-// 		c.SendMsg(msg)
-// 	}
-// }
+	c.mu.Lock()
+	c.isRunning = false 
+	c.mu.Unlock()
 
-// func (c *ControlLayer) SendConnectNeighbors() {
-// 	if len(c.directNeighbors) != 2 {
-// 		format.Display_e(c.GetName(), "SendConnectNeighbors", "Expected exactly 2 neighbors")
-// 		return
-// 	}
-// 	leftNeighbor := c.directNeighbors[0]
-// 	rightNeighbor := c.directNeighbors[1]
 
-// 	msgToLeft := format.Msg_format_multi(format.Build_msg_args(
-// 		"id", c.GenerateUniqueMessageID(),
-// 		"type", "connect_neighbors",
-// 		"sender_name_source", c.GetName(),
-// 		"sender_name", c.GetName(),
-// 		"sender_type", "control",
-// 		"destination", leftNeighbor,
-// 		"connect_to", rightNeighbor,
-// 		"propagation", "false",
-// 	))
+	logoutMsg := format.Msg_format_multi(format.Build_msg_args(
+		"id", c.GenerateUniqueMessageID(),
+		"type", "logout_announcement",
+		"sender_name_source", c.GetName(),
+		"sender_name", c.GetName(),
+		"sender_type", "control",
+		"destination", "", // sera remplacé pour chaque voisin
+		"content_value", "Node "+c.GetName()+" is disconnecting",
+		"propagation", "false",
+	))
 
-// 	msgToRight := format.Msg_format_multi(format.Build_msg_args(
-// 		"id", c.GenerateUniqueMessageID(),
-// 		"type", "connect_neighbors",
-// 		"sender_name_source", c.GetName(),
-// 		"sender_name", c.GetName(),
-// 		"sender_type", "control",
-// 		"destination", rightNeighbor,
-// 		"connect_to", leftNeighbor,
-// 		"propagation", "false",
-// 	))
+	for _, neighbor := range c.directNeighbors {
+		msg := format.Replaceval(logoutMsg, "destination", neighbor)
+		c.SendMsg(msg)
+	}
 
-// 	c.SendMsg(msgToLeft)
-// 	c.SendMsg(msgToRight)
-// }
+}
+
+func (c *ControlLayer) SendConnectNeighbors() {
+	if len(c.networkLayer.activeNeighborsIDs) != 2 {
+		format.Display_e(c.GetName(), "SendConnectNeighbors", "Expected exactly 2 neighbors")
+		return
+	}
+	leftNeighbor := strconv.Itoa(c.networkLayer.activeNeighborsIDs[0]) //c.directNeighbors[0]
+	rightNeighbor := strconv.Itoa(c.networkLayer.activeNeighborsIDs[1]) //c.directNeighbors[1]
+
+	msgToLeft := format.Msg_format_multi(format.Build_msg_args(
+		"id", c.GenerateUniqueMessageID(),
+		"type", "connect_neighbors",
+		"sender_name_source", c.GetName(),
+		"sender_name", c.GetName(),
+		"sender_type", "control",
+		"destination", leftNeighbor,
+		"connect_to", rightNeighbor,
+		"propagation", "false",
+	))
+
+	msgToRight := format.Msg_format_multi(format.Build_msg_args(
+		"id", c.GenerateUniqueMessageID(),
+		"type", "connect_neighbors",
+		"sender_name_source", c.GetName(),
+		"sender_name", c.GetName(),
+		"sender_type", "control",
+		"destination", rightNeighbor,
+		"connect_to", leftNeighbor,
+		"propagation", "false",
+	))
+
+	format.Display_w(c.GetName(), "SendCon", "Sending msg:"+ msgToLeft)
+	c.SendMsg(msgToLeft)
+	c.SendMsg(msgToRight)
+
+	c.networkLayer.SetDown(true)
+}

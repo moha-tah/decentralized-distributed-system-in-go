@@ -29,6 +29,7 @@ type UserNode struct {
 	httpServer         *http.Server                // HTTP server for web UI
 	port               int                         // HTTP server port
 	snapshotInProgress bool
+	down		 bool		// True when disconnected from the network
 }
 
 // NewUserNode creates a new user node
@@ -56,6 +57,7 @@ func NewUserNode(id string, model string, port int) *UserNode {
 		verifiedItemIDs:    make(map[string][]string),
 		port:               port,
 		snapshotInProgress: false,
+		down:			false,
 	}
 }
 
@@ -98,6 +100,10 @@ func (u *UserNode) HandleMessage(channel chan string) {
 		if !u.isRunning {
 			u.mu.Unlock()
 			continue
+		}
+		if u.down {
+			u.mu.Unlock()
+			return
 		}
 
 		rec_clk_str := format.Findval(msg, "clk")
@@ -457,6 +463,9 @@ func (u *UserNode) startWebServer() {
 	// API endpoint to take a snapshot
 	mux.HandleFunc("/api/snapshot", u.handleSnapshot)
 
+	// API endpoint to log out
+	mux.HandleFunc("/api/logout", u.handleLogout)
+
 	// Serve static files if needed
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
@@ -476,6 +485,10 @@ func (u *UserNode) startWebServer() {
 func (u *UserNode) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !u.isRunning {
+		http.Error(w, "User node is not running", http.StatusInternalServerError)
 		return
 	}
 
@@ -508,10 +521,30 @@ func (u *UserNode) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+
 func (n *UserNode) SetSnapshotInProgress(inProgress bool) {
 	n.mu.Lock()
 	n.snapshotInProgress = inProgress
 	n.mu.Unlock()
+}
+
+
+func (u *UserNode) handleLogout(w http.ResponseWriter, r *http.Request) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.isRunning = false // stop user processing
+
+	
+	format.Display_e(u.GetName(), "handleLogout()", "User node "+u.GetName()+" is logging out...")
+
+
+	u.ctrlLayer.SendLogoutAnnouncement()
+	u.ctrlLayer.SendConnectNeighbors()
+	
+	u.down = true // Set the node as down
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Logout called"))
 }
 
 // handleDashboard serves the HTML dashboard
@@ -792,8 +825,7 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			fetch('/api/logout', { method: 'POST' })
 				.then(response => {
 					if (response.ok) {
-						console.log("Logout request sent successfully");
-						alert("Déconnexion demandée !");
+						alert(response.statusText);
 					} else {
 						console.error("Erreur lors de la demande de déconnexion");
 						alert("Erreur lors de la déconnexion");
@@ -923,6 +955,11 @@ func (u *UserNode) handleAPIData(w http.ResponseWriter, r *http.Request) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
+	if !u.isRunning {
+		http.Error(w, "User node is not running", http.StatusInternalServerError)
+		return
+	}
+
 	// Create a clean copy of readings to ensure proper JSON serialization
 	readingsCopy := make(map[string][]models.Reading)
 	for sensor, readings := range u.recentReadings {
@@ -1001,14 +1038,3 @@ func (u *UserNode) SetApplicationState(state map[string][]models.Reading) {
 	u.recentPredictions = make(map[string][]float32)
 	format.Display_g(u.GetName(), "SetApplicationState", "Initialized recentPredictions as empty.")
 }
-
-// func (u *UserNode) Logout() {
-// 	u.mu.Lock()
-// 	defer u.mu.Unlock()
-// 	u.isRunning = false // stop user processing
-
-// 	u.ctrlLayer.SendLogoutAnnouncement()
-// 	u.ctrlLayer.SendConnectNeighbors()
-
-// 	// TODO : ferme proprement les connexions réseau / canaux
-// }
