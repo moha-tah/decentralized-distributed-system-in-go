@@ -52,7 +52,7 @@ type NetworkLayer struct {
 	nodeRequestingElection string // Name of the node requesting the election, if any
 	// waitingConn 		net.Conn	// Connection to the node that is waiting for admission
 
-	down 			bool // True if the node is down (disconntectionc)
+	down bool // True if the node is down (disconntectionc)
 }
 
 func NewNetworkLayer(id, nodeType string, appNode *Node, controlLayer *ControlLayer, peers_int []string) NetworkLayer {
@@ -368,7 +368,7 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 			n.AskSnapshotControlAndPropagateSnapshotRequest(msg, peer_id_str)
 			canPropagateMessage = false // Propagation handled in AskSnapshotControlAndPropagateSnapshotRequest
 		} else if msg_type == "connect_neighbors" {
-			n.channel_to_control <- msg 
+			n.channel_to_control <- msg
 			canPropagateMessage = false
 		} else {
 			msg_destination := format.Findval(msg, "destination")
@@ -408,7 +408,7 @@ func (n *NetworkLayer) MessageFromControlLayer(msg string) {
 		if msg_dest_id == strconv.Itoa(n.activeNeighborsIDs[0]) {
 			idToAvoid = strconv.Itoa(n.activeNeighborsIDs[1])
 		} else {
-			idToAvoid = strconv.Itoa(n.activeNeighborsIDs[0]) 
+			idToAvoid = strconv.Itoa(n.activeNeighborsIDs[0])
 		}
 	}
 	format.Display_network(n.GetName(), "MessageFromControlLayer()", "Propagating message of control layer to all active connections.")
@@ -421,7 +421,7 @@ func (n *NetworkLayer) MessageFromControlLayer(msg string) {
 	n.mu.Unlock()
 }
 
-func (n* NetworkLayer) SetDown(down bool) {
+func (n *NetworkLayer) SetDown(down bool) {
 	n.mu.Lock()
 	n.down = n.down
 	n.mu.Unlock()
@@ -826,37 +826,28 @@ func (n *NetworkLayer) AddNewMessageId(sender_name string, MID_str string) {
 // }
 
 func (n *NetworkLayer) ConnectToNeighbor(neighborID int, neighborID_to_remove int) error {
-	format.Display_e(n.GetName(), "ConnectToNeighbor()", fmt.Sprintf("Connecting to neighbor with ID %d, replacing old neighbor ID %d", neighborID, neighborID_to_remove))
 	address := "localhost:" + strconv.Itoa(9000+neighborID)
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
 		format.Display_e(n.GetName(), "ConnectToNeighbor", "Failed to connect to "+strconv.Itoa(neighborID)+": "+err.Error())
 		return err
 	}
+
+	// Connexion réussie, on affiche un message clair ici
+	format.Display_g(n.GetName(), "ConnectToNeighbor", fmt.Sprintf("Connexion TCP réussie entre %s (ID %s) et voisin (ID %d) à l'adresse %s", n.GetName(), n.id, neighborID, address))
+
+	// Pour le moment tu fermes la connexion immédiatement :
 	conn.Close()
 
-	// Optionnel : stocker la connexion pour réutilisation
-	// n.activeConns[neighborName] = conn
-	
-	// Find old neighbor index and replace it with new neighbor ID 
+	// Mise à jour des voisins
 	n.mu.Lock()
 	index := slices.Index(n.activeNeighborsIDs, neighborID_to_remove)
-	n.mu.Unlock()
 	if index != -1 {
-		n.mu.Lock()
-		n.activeNeighborsIDs[index] = neighborID // Replace old neighbor ID with new one
-		n.mu.Unlock()
+		n.activeNeighborsIDs[index] = neighborID
 	} else {
-		activeneighbors_str := ""
-		for _, nid := range n.activeNeighborsIDs {
-			activeneighbors_str += strconv.Itoa(nid) + ", "
-		}
-		format.Display_e(n.GetName(), "ConnectToNeighbor", "Old neighbor ID "+strconv.Itoa(neighborID_to_remove)+" not found in active neighbors: "+activeneighbors_str)
+		format.Display_e(n.GetName(), "ConnectToNeighbor", "Old neighbor ID not found in active neighbors")
 	}
-
-	format.Display_g(n.GetName(), "ConnectToNeighbor", "Connected to neighbor "+strconv.Itoa(neighborID)+" at "+address)
-
-	// go n.handleConnection(conn)
+	n.mu.Unlock()
 
 	return nil
 }

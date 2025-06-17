@@ -7,6 +7,7 @@ import (
 	"distributed_system/utils"
 	"encoding/base64"
 	"encoding/gob"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -140,7 +141,6 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 
 	for msg := range channel {
 
-
 		format.Display_d(c.GetName(), "HandleMessage()", "Received message of type: "+format.Findval(msg, "type")+" by "+format.Findval(msg, "sender_name_source")+" through node "+format.Findval(msg, "sender_name")+"to destination "+format.Findval(msg, "destination"))
 		// It might happen eg. in a bidirectionnal ring.
 		// If it is the case (= duplicate) => ignore.
@@ -226,11 +226,13 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 			}
 		} else if msg_destination == c.GetName() || msg_destination == strings.Split(c.id, "_")[0] { // The msg is only for the current node
 			switch msg_type {
+			case "logout_announcement":
+				format.Display_g(c.GetName(), "HandleMessage", "Message logout_announcement reçu de "+format.Findval(msg, "sender_name_source"))
 
 			case "connect_neighbors":
 				connectTo := format.Findval(msg, "connect_to")
+				format.Display_g(c.GetName(), "HandleMessage", "connectTo raw value: "+connectTo)
 
-				// Met à jour la liste des voisins dans ControlLayer
 				c.mu.Lock()
 				for i, neighbor := range c.directNeighbors {
 					if neighbor == format.Findval(msg, "sender_name_source") {
@@ -240,15 +242,20 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 				}
 				c.mu.Unlock()
 
-				// Demande au NetworkLayer d'établir la connexion TCP
 				if c.networkLayer != nil {
-					sender_id_to_disconnect, _ := strconv.Atoi(format.Findval(msg, "sender_id"))
-					connectToInt, _ := strconv.Atoi(connectTo)
-					err := c.networkLayer.ConnectToNeighbor(connectToInt, sender_id_to_disconnect)
+					senderIDStr := format.Findval(msg, "sender_id")
+					senderID, err1 := strconv.Atoi(senderIDStr)
+					connectToInt, err2 := strconv.Atoi(connectTo)
+					if err1 != nil || err2 != nil {
+						format.Display_e(c.GetName(), "HandleMessage", fmt.Sprintf("Invalid ID conversion: sender_id='%s' err=%v, connect_to='%s' err=%v", senderIDStr, err1, connectTo, err2))
+						break
+					}
+					err := c.networkLayer.ConnectToNeighbor(connectToInt, senderID)
 					if err != nil {
 						format.Display_e(c.GetName(), "HandleMessage", "Failed to connect to neighbor "+connectTo)
 					}
 				}
+
 			case "pear_discovery_answer":
 				c.HandlePearDiscoveryAnswerFromResponsibleNode(msg)
 
@@ -477,11 +484,11 @@ func resizeVC(oldVC []int, oldSites []string, newSites []string) []int {
 }
 
 func (c *ControlLayer) SendLogoutAnnouncement() {
-
 	c.mu.Lock()
-	c.isRunning = false 
+	c.isRunning = false
+	neighbors := make([]string, len(c.directNeighbors))
+	copy(neighbors, c.directNeighbors) // copie pour accès hors du lock
 	c.mu.Unlock()
-
 
 	logoutMsg := format.Msg_format_multi(format.Build_msg_args(
 		"id", c.GenerateUniqueMessageID(),
@@ -494,11 +501,11 @@ func (c *ControlLayer) SendLogoutAnnouncement() {
 		"propagation", "false",
 	))
 
-	for _, neighbor := range c.directNeighbors {
+	for _, neighbor := range neighbors {
 		msg := format.Replaceval(logoutMsg, "destination", neighbor)
+		format.Display_g(c.GetName(), "SendLogoutAnnouncement", "Envoi du message logout_announcement au voisin "+neighbor)
 		c.SendMsg(msg)
 	}
-
 }
 
 func (c *ControlLayer) SendConnectNeighbors() {
@@ -506,7 +513,7 @@ func (c *ControlLayer) SendConnectNeighbors() {
 		format.Display_e(c.GetName(), "SendConnectNeighbors", "Expected exactly 2 neighbors")
 		return
 	}
-	leftNeighbor := strconv.Itoa(c.networkLayer.activeNeighborsIDs[0]) //c.directNeighbors[0]
+	leftNeighbor := strconv.Itoa(c.networkLayer.activeNeighborsIDs[0])  //c.directNeighbors[0]
 	rightNeighbor := strconv.Itoa(c.networkLayer.activeNeighborsIDs[1]) //c.directNeighbors[1]
 
 	msgToLeft := format.Msg_format_multi(format.Build_msg_args(
@@ -531,7 +538,7 @@ func (c *ControlLayer) SendConnectNeighbors() {
 		"propagation", "false",
 	))
 
-	format.Display_w(c.GetName(), "SendCon", "Sending msg:"+ msgToLeft)
+	format.Display_w(c.GetName(), "SendCon", "Sending msg:"+msgToLeft)
 	c.SendMsg(msgToLeft)
 	c.SendMsg(msgToRight)
 

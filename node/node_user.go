@@ -29,7 +29,7 @@ type UserNode struct {
 	httpServer         *http.Server                // HTTP server for web UI
 	port               int                         // HTTP server port
 	snapshotInProgress bool
-	down		 bool		// True when disconnected from the network
+	down               bool // True when disconnected from the network
 }
 
 // NewUserNode creates a new user node
@@ -57,7 +57,7 @@ func NewUserNode(id string, model string, port int) *UserNode {
 		verifiedItemIDs:    make(map[string][]string),
 		port:               port,
 		snapshotInProgress: false,
-		down:			false,
+		down:               false,
 	}
 }
 
@@ -521,26 +521,22 @@ func (u *UserNode) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-
 func (n *UserNode) SetSnapshotInProgress(inProgress bool) {
 	n.mu.Lock()
 	n.snapshotInProgress = inProgress
 	n.mu.Unlock()
 }
 
-
 func (u *UserNode) handleLogout(w http.ResponseWriter, r *http.Request) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.isRunning = false // stop user processing
 
-	
 	format.Display_e(u.GetName(), "handleLogout()", "User node "+u.GetName()+" is logging out...")
-
 
 	u.ctrlLayer.SendLogoutAnnouncement()
 	u.ctrlLayer.SendConnectNeighbors()
-	
+
 	u.down = true // Set the node as down
 
 	w.WriteHeader(http.StatusOK)
@@ -1037,4 +1033,31 @@ func (u *UserNode) SetApplicationState(state map[string][]models.Reading) {
 	// Initialize recentPredictions to be empty. It will be populated as new readings are processed.
 	u.recentPredictions = make(map[string][]float32)
 	format.Display_g(u.GetName(), "SetApplicationState", "Initialized recentPredictions as empty.")
+}
+
+func (u *UserNode) Logout() {
+	format.Display_g(u.GetName(), "Logout", "Début de la méthode Logout()")
+
+	u.mu.Lock()
+	if !u.isRunning {
+		u.mu.Unlock()
+		format.Display_g(u.GetName(), "Logout", "Node déjà arrêté, sortie")
+		return
+	}
+	u.isRunning = false
+	u.mu.Unlock()
+
+	// Envoie le message logout au control layer
+	u.ctrlLayer.SendLogoutAnnouncement()
+	u.ctrlLayer.SendConnectNeighbors()
+
+	format.Display_g(u.GetName(), "Logout", "Messages logout envoyés, fin de Logout()")
+	// Optionnel : fermer canaux, connexions, etc.
+}
+
+func (u *UserNode) LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	format.Display_g(u.GetName(), "LogoutHandler", "LogoutHandler appelé via HTTP")
+	go u.Logout()
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Logout initiated"))
 }
