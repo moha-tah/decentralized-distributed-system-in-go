@@ -199,7 +199,7 @@ func (n *NetworkLayer) startClient(peer_id_str string, wg *sync.WaitGroup) {
 func (n *NetworkLayer) StartControlLayer(firstnode_arg ...bool) {
 	firstnode := false
 	if len(firstnode_arg) > 0 && firstnode_arg[0] {
-		firstnode = true 
+		firstnode = true
 	}
 	format.Display_network(n.GetName(), "Start()", "Starting control layer.")
 	n.controlLayer.SetNetworkLayer(n)
@@ -772,3 +772,44 @@ func (n *NetworkLayer) AddNewMessageId(sender_name string, MID_str string) {
 
 	n.IDWatcher.AddMIDToNode(sender_name, msg_NbMessageSent)
 }
+
+// func (n *NetworkLayer) getNodeIDFromName(nodeName string) int {
+// 	for _, knownName := range n.knownPeersIDs {
+// 		if knownName == nodeName {
+// 			// Extrait l'ID numérique depuis la chaîne, ex: "control (1_control)" -> 1
+// 			// Ici, il faut parser la chaîne pour extraire le numéro
+// 			re := regexp.MustCompile(`\((\d+)_control\)`)
+// 			match := re.FindStringSubmatch(nodeName)
+// 			if len(match) == 2 {
+// 				id, err := strconv.Atoi(match[1])
+// 				if err == nil {
+// 					return id
+// 				}
+// 			}
+// 		}
+// 	}
+// 	return -1 // pas trouvé
+// }
+
+// func (n *NetworkLayer) ConnectToNeighbor(neighborName string) error {
+// 	neighborID := n.getNodeIDFromName(neighborName)
+// 	if neighborID == -1 {
+// 		return fmt.Errorf("Neighbor ID not found for %s", neighborName)
+// 	}
+
+// 	address := "localhost:" + strconv.Itoa(9000+neighborID)
+// 	conn, err := net.Dial("tcp", address)
+// 	if err != nil {
+// 		format.Display_e(n.GetName(), "ConnectToNeighbor", "Failed to connect to "+neighborName+": "+err.Error())
+// 		return err
+// 	}
+
+// 	// Optionnel : stocker la connexion pour réutilisation
+// 	// n.activeConns[neighborName] = conn
+
+// 	format.Display_g(n.GetName(), "ConnectToNeighbor", "Connected to neighbor "+neighborName+" at "+address)
+
+// 	go n.handleConnection(conn)
+
+// 	return nil
+// }

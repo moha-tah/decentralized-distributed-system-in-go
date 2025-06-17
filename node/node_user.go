@@ -1,7 +1,6 @@
 package node
 
 import (
-	"context"
 	"distributed_system/format"
 	"distributed_system/models"
 	"distributed_system/utils"
@@ -180,19 +179,6 @@ func (u *UserNode) HandleMessage(channel chan string) {
 			u.processDatabse()
 		case "lock_release_and_verified_value":
 			go u.handleLockRelease(msg)
-
-		case "disconnect_confirmation":
-			format.Display(format.Format_d("node_user.go", "HandleMessage()",
-				"Received disconnect confirmation"))
-			// Commencer le nettoyage
-			go func() {
-				time.Sleep(2 * time.Second) // Délai pour s'assurer que tous les messages sont traités
-				u.Cleanup()
-				format.Display(format.Format_d("node_user.go", "HandleMessage()",
-					"Node "+u.GetName()+" successfully disconnected"))
-				// Ici vous pourriez déclencher l'arrêt complet du processus si nécessaire
-				// os.Exit(0)
-			}()
 
 		case "snapshot_request":
 			format.Display(format.Format_d(
@@ -801,39 +787,24 @@ func (u *UserNode) handleDashboard(w http.ResponseWriter, r *http.Request) {
             }
         }
     }
-		function logout() {
-			const logoutButton = document.getElementById('logout-button');
-			if (!confirm('Êtes-vous sûr de vouloir vous déconnecter ? Cette action fermera votre nœud.')) {
-				return;
-			}
-			logoutButton.disabled = true;
-			logoutButton.textContent = '⏳ Déconnexion...';
-
-			fetch('/api/disconnect', {
-				method: 'POST',
-				headers: {'Content-Type': 'application/json'},
-				body: JSON.stringify({timestamp: new Date().toISOString()})
-			})
-			.then(response => {
-				if (!response.ok) throw new Error("HTTP error! status: ${response.status}");
-				return response.json();
-			})
-			.then(data => {
-				showDisconnectMessage('✅ Déconnexion initiée avec succès. Fermeture en cours...', 'success');
-				disableAllInteractions();
-				setTimeout(() => {
-					window.close();
-					window.location.href = 'about:blank';
-				}, 3000);
-			})
-			.catch(error => {
-				logoutButton.disabled = false;
-				logoutButton.textContent = '🚪 Déconnexion';
-				showDisconnectMessage('❌ Erreur lors de la déconnexion: ' + error.message, 'error');
-			});
-		}
-
 		
+		function logout() {
+			fetch('/api/logout', { method: 'POST' })
+				.then(response => {
+					if (response.ok) {
+						console.log("Logout request sent successfully");
+						alert("Déconnexion demandée !");
+					} else {
+						console.error("Erreur lors de la demande de déconnexion");
+						alert("Erreur lors de la déconnexion");
+					}
+				})
+				.catch(error => {
+					console.error("Erreur réseau:", error);
+					alert("Erreur réseau lors de la déconnexion");
+				});
+		}
+				
 
         // Fetch data from the API and update the UI
         function fetchData() {
@@ -1031,86 +1002,13 @@ func (u *UserNode) SetApplicationState(state map[string][]models.Reading) {
 	format.Display_g(u.GetName(), "SetApplicationState", "Initialized recentPredictions as empty.")
 }
 
-func (u *UserNode) InitiateDisconnection() error {
-	u.mu.Lock()
-	defer u.mu.Unlock()
+// func (u *UserNode) Logout() {
+// 	u.mu.Lock()
+// 	defer u.mu.Unlock()
+// 	u.isRunning = false // stop user processing
 
-	if !u.isRunning {
-		return fmt.Errorf("node is not running")
-	}
+// 	u.ctrlLayer.SendLogoutAnnouncement()
+// 	u.ctrlLayer.SendConnectNeighbors()
 
-	format.Display(format.Format_d("node_user.go", "InitiateDisconnection()",
-		"User "+u.GetName()+" initiating disconnection"))
-
-	// Marquer le nœud comme étant en cours de déconnexion
-	u.isRunning = false
-
-	// Envoyer un message de déconnexion via la couche de contrôle
-	msgID := u.GenerateUniqueMessageID()
-	disconnectMsg := format.Msg_format_multi(format.Build_msg_args(
-		"id", msgID,
-		"type", "node_disconnect_request",
-		"sender_name", u.GetName(),
-		"sender_name_source", u.GetName(),
-		"sender_type", u.Type(),
-		"destination", "control", // Message pour toutes les couches de contrôle
-		"clk", strconv.Itoa(u.clk),
-		"vector_clock", utils.SerializeVectorClock(u.vectorClock),
-		"content_type", "disconnect_notification",
-		"content_value", u.ctrlLayer.GetName(), // Nom de la couche de contrôle associée
-		"propagation", "true", // Assurer la propagation
-	))
-
-	// Envoyer le message de déconnexion
-	u.SendMessage(disconnectMsg)
-
-	format.Display(format.Format_d("node_user.go", "InitiateDisconnection()",
-		"Disconnect request sent by "+u.GetName()))
-
-	return nil
-}
-
-func (u *UserNode) Cleanup() {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-
-	format.Display(format.Format_d("node_user.go", "Cleanup()",
-		"Cleaning up resources for "+u.GetName()))
-
-	// Arrêter le serveur HTTP s'il existe
-	if u.httpServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		u.httpServer.Shutdown(ctx)
-	}
-
-	// Vider les données locales
-	u.recentReadings = make(map[string][]models.Reading)
-	u.recentPredictions = make(map[string][]float32)
-	u.verifiedItemIDs = make(map[string][]string)
-
-	u.isRunning = false
-}
-
-func (u *UserNode) handleDisconnectRequest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	format.Display(format.Format_d("node_user.go", "handleDisconnectRequest()",
-		"Disconnect request received from web interface"))
-
-	err := u.InitiateDisconnection()
-	if err != nil {
-		http.Error(w, "Failed to initiate disconnection: "+err.Error(),
-			http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"message": "Disconnection initiated successfully",
-	})
-}
+// 	// TODO : ferme proprement les connexions réseau / canaux
+// }

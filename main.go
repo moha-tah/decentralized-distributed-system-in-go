@@ -14,9 +14,9 @@ func main() {
 		return
 	}
 
-	node_type := os.Args[1] 	// Node type (e.g., "client", "server")
-	node_id := os.Args[2]  		// Node ID (should be an integer)
-	peers := os.Args[3:]		// Optional list of peer addresses (e.g., "peer1:port", "peer2:port")
+	node_type := os.Args[1] // Node type (e.g., "client", "server")
+	node_id := os.Args[2]   // Node ID (should be an integer)
+	peers := os.Args[3:]    // Optional list of peer addresses (e.g., "peer1:port", "peer2:port")
 
 	// Check that node_type is valid
 	node_id_int, err := strconv.Atoi(node_id)
@@ -32,7 +32,7 @@ func main() {
 	}
 	if len(peers) == 2 {
 		seen := make(map[string]bool)
-			for _, item := range peers {
+		for _, item := range peers {
 			if seen[item] {
 				fmt.Fprintf(os.Stderr, "Error: Duplicate peer address %q found in the list of peers.\n", item)
 				os.Exit(1) // Exit with error
@@ -44,7 +44,6 @@ func main() {
 	// listenPort := strconv.Itoa(node_id_int) // port calculation based on node_id
 
 	var child_node node.Node = nil
-
 
 	baseTempLow := float32(15.0)
 	baseTempHigh := float32(30.0)
@@ -70,7 +69,7 @@ func main() {
 	}
 
 	control_layer := node.NewControlLayer(node_id+"_control", child_node)
-	network_layer := node.NewNetworkLayer(node_id, node_type, &child_node, control_layer,peers)
+	network_layer := node.NewNetworkLayer(node_id, node_type, &child_node, control_layer, peers)
 
 	network_layer.Start() // Start the network layer
 	control_layer.Start() // Start the control layer
@@ -78,7 +77,6 @@ func main() {
 	// Block forever or until signal
 	select {} // empty select blocks forever
 }
-
 
 // This function is used to demonstrate the serialization and deserialization of snapshot data.
 // It creates a snapshot data object, serializes it to a string, and then deserializes it back to an object.
