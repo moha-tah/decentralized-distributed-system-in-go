@@ -338,7 +338,15 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
 		msg := scanner.Text()
+		if format.Findval(msg, "type") =="lock_reply" {
+			format.Display_network(n.GetName(), "handleConnection()", "Received lock reply message from "+format.Findval(msg, "sender_name_source") + "for item ID " + format.Findval(msg, "item_id") + " with message id " + format.Findval(msg, "id"))
+			format.Display_network(n.GetName(), "handleConnection()", "Message content: "+msg)
+		}
 		if n.SawThatMessageBefore(msg) {
+
+			if format.Findval(msg, "type") =="lock_reply" {
+				format.Display_network(n.GetName(), "handleConnection()", "Already received lock reply message from "+format.Findval(msg, "sender_name_source") + "for item ID " + format.Findval(msg, "item_id") + " with message id " + format.Findval(msg, "id"))
+			}
 			break
 		}
 
@@ -381,7 +389,7 @@ func (n *NetworkLayer) handleConnection(conn net.Conn) {
 				// it is a message for me.the upper layers. => Pass to control layer
 				// go n.controlLayer.HandleMessage(msg)
 				n.channel_to_control <- msg // Send the message to the control layer through the channel
-			} else if msg_destination == n.controlLayer.GetName() {
+			} else if msg_destination == n.controlLayer.GetName() || msg_destination == n.controlLayer.child.GetName() {
 				// go n.controlLayer.HandleMessage(msg)
 				n.channel_to_control <- msg // Send the message to the control layer through the channel
 				canPropagateMessage = false
@@ -412,7 +420,9 @@ func (n *NetworkLayer) MessageFromControlLayer(msg string) {
 		}
 	}
 	format.Display_network(n.GetName(), "MessageFromControlLayer()", "Propagating message of control layer to all active connections.")
-	msg = format.AddOrReplaceFieldToMessage(msg, "sender_name_source", n.controlLayer.GetName())
+	if format.Findval(msg, "sender_name_source") != n.controlLayer.GetName() && format.Findval(msg, "sender_name_source") != n.controlLayer.child.GetName() {
+		msg = format.AddOrReplaceFieldToMessage(msg, "sender_name_source", n.controlLayer.GetName())
+	}
 	if format.Findval(msg, "propagation") == "" {
 		msg = format.AddOrReplaceFieldToMessage(msg, "propagation", "true") // Set propagation to true by default
 	}

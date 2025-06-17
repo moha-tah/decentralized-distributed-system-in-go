@@ -19,9 +19,9 @@ func SynchroniseVectorClock(vc1 []int, vc2 []int, caller_index int) ([]int, erro
 	if len(vc1) != len(vc2) {
 		return nil, fmt.Errorf(fmt.Sprintf("utils.SynchroniseVectorClock: vector clocks must be of the same length. Got %d and %d", len(vc1), len(vc2)))
 	}
-	if len(vc1) == 0 {
+	if len(vc1) < len(vc2) {
 		return vc2, nil
-	} else if len(vc2) == 0 {
+	} else if len(vc2) < len(vc1) {
 		return vc1, nil
 	}
 	newVC := make([]int, len(vc1))

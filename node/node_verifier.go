@@ -93,6 +93,7 @@ func (v *VerifierNode) Start() error {
 				// Only check for unverified items if we're not already processing
 				// more than the processing capacity.
 				if l_processing < processingCapacity { // Search for new only if not full already
+					format.Display_e(v.GetName(), "Start()", "Checking for unverified items...")
 					go v.CheckUnverifiedItems()
 				} else {
 					// // debug:
@@ -166,7 +167,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			}
 
 			format.Display(format.Format_d(
-				"node_user.go", "HandleMessage()",
+				v.GetName(), "HandleMessage()",
 				v.GetName()+" received the new reading <"+msg_content_value+"> from "+msg_sender))
 			// Get or create the queue for the sender
 			v.mu.Lock()
@@ -248,6 +249,7 @@ func (v *VerifierNode) HandleMessage(channel chan string) {
 			go v.handleLockRequest(msg)
 
 		case "lock_reply":
+			format.Display_d(v.GetName(), "HandleMessage()", fmt.Sprintf("Received lock reply from %s for item %s.", format.Findval(msg, "sender_name_source"), format.Findval(msg, "item_id")))
 			go v.handleLockReply(msg)
 
 		case "lock_release_and_verified_value":
@@ -535,6 +537,7 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 			"type", "lock_reply",
 			"sender_name", v.GetName(),
 			"sender_name_source", v.GetName(),
+			"verifier_id", v.GetName(),
 			"sender_type", v.Type(),
 			"destination", senderID,
 			"vector_clock", our_VC,
@@ -550,11 +553,14 @@ func (v *VerifierNode) handleLockRequest(msg string) {
 
 // handleLockReply processes a lock reply from another verifier
 func (v *VerifierNode) handleLockReply(msg string) {
+	format.Display_d(v.GetName(), "handleLockReply()", fmt.Sprintf("Received lock reply from %s for item %s with status %s.", format.Findval(msg, "sender_name_source"), format.Findval(msg, "item_id"), format.Findval(msg, "granted")))
 
 	// Extract information from the message
-	senderID := format.Findval(msg, "sender_name_source")
 	itemID := format.Findval(msg, "item_id")
+	// senderID := format.Findval(msg, "sender_name_source")
+	senderID := strings.Split(itemID, "_")[0]
 	grantedStr := format.Findval(msg, "granted")
+	verifierID := format.Findval(msg, "verifier_id")
 
 	granted, err := strconv.ParseBool(grantedStr)
 	if err != nil {
@@ -570,7 +576,7 @@ func (v *VerifierNode) handleLockReply(msg string) {
 	}
 
 	// Record the reply
-	v.lockReplies[itemID][senderID] = granted
+	v.lockReplies[itemID][verifierID] = granted
 
 	// Check if we have received replies from all verifiers:
 	allReplied := true
@@ -592,6 +598,14 @@ func (v *VerifierNode) handleLockReply(msg string) {
 
 	} else if allReplied && !canProcess {
 		go v.cancelLockRequest(itemID) // We can cancel the lock request
+	} else {
+		waiting_for := ""
+		for verifierID := range v.otherVerifiers {
+			if _, replied := v.lockReplies[itemID][verifierID]; !replied {
+				waiting_for += verifierID + " "
+			}
+		}
+		format.Display_d(v.GetName(), "handleLockReply()", fmt.Sprintf("Not all verifiers replied yet for item %s. Waiting for replies from: %s", itemID, waiting_for))
 	}
 }
 
@@ -921,7 +935,11 @@ func (v *VerifierNode) getValueFromReadingID(itemID string, fixedSenderID string
 	queue, exists := v.recentReadings[senderID]
 	v.mu.Unlock()
 	if !exists {
-		return 0.0, fmt.Errorf("No sender <" + senderID + "> in v.recentReadings.")
+		existingSenderIDs := ""
+		for sID := range v.recentReadings {
+			existingSenderIDs += sID + " "
+		}
+		return 0.0, fmt.Errorf("No sender <" + senderID + "> in v.recentReadings that are " + existingSenderIDs)
 	} else {
 		// Find the reading for this sender
 		for _, rItem := range queue {

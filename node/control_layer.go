@@ -147,19 +147,25 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 		if c.SawThatMessageBefore(msg) {
 			return
 		}
+		format.Display_d(c.GetName(), "HandleMessage()", "Message is : "+msg)
 
 		// Receiving operations: update the vector clock and the logical clock
 		c.mu.Lock()
 		if c.vectorClockReady && format.Findval(msg, "vector_clock") != "" { // can be "" for new_node msg
 			// Update the vector clock
 			recVC := format.RetrieveVectorClock(msg, len(c.vectorClock))
-			vectorClock, err := utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
-			if err != nil {
-				if len(c.vectorClock) == 0 || len(c.vectorClock) > len(recVC) {
-					c.vectorClock = recVC
-				}
+			if c.nodeIndex > len(recVC)-1 {
+				format.Display_e(c.GetName(), "HandleMessage", "Received vector clock is smaller than expected. This should not happen.")
+				
 			} else {
-				c.vectorClock = vectorClock
+				vectorClock, err := utils.SynchroniseVectorClock(c.vectorClock, recVC, c.nodeIndex)
+				if err != nil {
+					if len(c.vectorClock) == 0 || len(c.vectorClock) > len(recVC) {
+						c.vectorClock = recVC
+					}
+				} else {
+					c.vectorClock = vectorClock
+				}
 			}
 
 		}
@@ -469,6 +475,12 @@ func (c *ControlLayer) HandleMessage(channel chan string) {
 					))
 					c.SendMsg(msg_to_verifier, true)
 				}
+			case "lock_reply":
+				if c.child.Type() == "verifier" {
+					// The msg is for the child app layer (which is a verifier)
+					c.SendMsg(msg, true) // Send to child through channel
+				}
+
 			}
 
 		} else if msg_destination == "verifiers" {
