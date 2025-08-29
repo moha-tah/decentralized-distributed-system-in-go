@@ -14,6 +14,8 @@ The goal is to observe the impact of verifier parameters on user behaviors.
 
 Each node maintains a **local replica** of the shared dataset (past 15 days of temperature readings) and participates in maintaining **consistency** between replicas using **locks** and **logical clocks**.
 
+The code is written in Go and some scripts are made in bash.
+
 ---
 
 ## Usage 🔌
