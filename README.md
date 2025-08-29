@@ -1,33 +1,30 @@
-***REMOVED***
-
 # Distributed Data Sharing System (applied to Temperature) 🌦️ $\to$ ⚙️ $\to$ 📈
-
 
 ## Project Description 🗃️
 
-This project implements a **fully decentralized distributed system** where multiple types of nodes collaborate to collect, verify, and use data across different sites.  
+This project implements a **fully decentralized distributed system** where multiple types of nodes collaborate to collect, verify, and use data across different sites.
 
 The system models a real-world scenario where devices collect sensor data, verify its accuracy, and produce predictions, while ensuring correct coordination and consistency across geographically separate nodes.
 
-For educational purpose, it is applied to temperature data: sensors get temperature, and users predict the next day weather based on the 15 days past data. 
-All system's nodes will work on their own copy of this dataset (the 15 past data, *15 past days as working with temperature*).
+For educational purpose, it is applied to temperature data: sensors get temperature, and users predict the next day weather based on the 15 days past data.
+All system's nodes will work on their own copy of this dataset (the 15 past data, _15 past days as working with temperature_).
 
 The core idea is that **sensors might give erroneous data, perturbating the users**. Thus, verifier systems are integrated to update, slowly, each data point one after the other.
 The goal is to observe the impact of verifier parameters on user behaviors.
 
 Each node maintains a **local replica** of the shared dataset (past 15 days of temperature readings) and participates in maintaining **consistency** between replicas using **locks** and **logical clocks**.
 
-
 ---
 
 ## Usage 🔌
 
-Build: 
+Build:
+
 ```bash
 go build main.go
 ```
 
-Then, to create a network: 
+Then, to create a network:
 
 ```bash
 ./network_ring.sh A:-node_type,sensor \ B:-node_type,verifier \ C:-node_type,sensor \ D:-node_type,user_exp \ E:-node_type,sensor \ F:-node_type,user_linear \ G:-node_type,verifie
@@ -35,11 +32,10 @@ Then, to create a network:
 
 The web views will be on http://localhost:8085/ and http://localhost:8083/ (one for each user node).
 
-
 The `main` program takes the arguments:
 
 | Argument     | Meaning                                                                 |
-|--------------|-------------------------------------------------------------------------|
+| ------------ | ----------------------------------------------------------------------- |
 | `-node_type` | Type of node: sensor, verifier, user_linear, user_exp (default: sensor) |
 | `-node_name` | Name of the node (default: "Sensor 1")                                  |
 
@@ -50,8 +46,6 @@ For a bidirectional ring network,use the `network_ring.sh`.
 Below is a **bi**directional ring network (`network_ring.sh`):
 
 ![ring network demo image](docs/ring_network.png)
-
-
 
 ## Key Features 💡
 
@@ -70,12 +64,11 @@ Below is a **bi**directional ring network (`network_ring.sh`):
 - **Flexible Role Execution**:  
   A single program can run in different node modes (`sensor`, `verifier`, or `user`) based on configuration at launch.
 
-
 ### Pear Discovery
 
 Pear discovery works as so:
 
-- The node whose id is `0_control` (the first control node), no matter the application it is related to, will be the initiator and will send a `pear_discovery` message to all other control nodes (*after a wait of 1 second, to make sure all nodes did start*)
+- The node whose id is `0_control` (the first control node), no matter the application it is related to, will be the initiator and will send a `pear_discovery` message to all other control nodes (_after a wait of 1 second, to make sure all nodes did start_)
 - all control nodes will answer to `0_control` (directly, and only) with their own names
 - after another wait of 1 second, the initiator will accept all received names as definitive, as close the pear discovery. It will thus propagate all received node names to all nodes, so that every control layers know who is in the network (and thus how many).
 - The initiator will then start its application layer.
@@ -107,20 +100,20 @@ sequenceDiagram
     participant Main as Main Application
     participant CN as Child Node (Sensor/Verifier/User)
     participant CL as Control Layer
-    
+
     Main->>Main: Parse command line arguments
     Main->>Main: Validate node_type
- 	
+
     alt node_type = "sensor"
         Main->>CN: NewSensorNode(id, interval, errorRate)
     else node_type = "verifier"
         Main->>CN: NewVerifierNode(id, processingCapacity)
     else node_type = "user"
         Main->>CN: NewUserNode(id, model)
-    end   
-	
+    end
+
     Main->>CL: NewControlLayer(id + "_control", childNode)
-    
+
     Main->>CL: Start()
     activate CL
     CL->>CL: PearDiscovery()
@@ -128,15 +121,15 @@ sequenceDiagram
     CL->>CN: Start()
     activate CN
 
-    
-    
+
+
     CL->>CL: Begin message handling loop
     CN->>CN: Begin node-specific operations
     deactivate CN
     deactivate CL
-    
+
 ```
-	
+
 </details>
 
 #### Message handling inner flow
@@ -149,41 +142,40 @@ sequenceDiagram
     participant Other as Other Nodes
     participant CL as Control Layer
     participant CN as Child Node (Verifier/User)
-    
+
     Other->>CL: Message arrives via stdin
     activate CL
-    
+
     CL->>CL: Extract message ID
-    
+
     alt message ID already seen
         CL-->>CL: Discard message (prevent loops)
     else message ID is new
         CL->>CL: Remember this ID
         CL->>CL: Update clock
-        
+
         alt msg_destination = "applications"
             CL->>CL: Parse message details
-            
+
             alt msg_type = "new_reading"
                 CL->>CN: Send to application layer
                 activate CN
                 CN->>CN: Process reading according to node type
                 deactivate CN
-                
+
                 CL->>Other: Propagate message to other nodes
             end
         else msg_destination = "control"
             CL->>CL: Handle control messages & propagate
         end
     end
-    
+
     deactivate CL
 ```
-	
+
 </details>
 
 #### Message handling outer flow
-
 
 <details open>
   <summary>Message flow between controllers and nodes. An example with one node of each type</summary>
@@ -200,7 +192,7 @@ sequenceDiagram
 
     Main->>SN: Start()
     Main->>SCL: Start()
-    
+
     activate SN
     Note over SN: Every readInterval
     SN->>SN: generateReading()
@@ -216,7 +208,7 @@ sequenceDiagram
     VCL->>VCL: Update clock
     VCL->>VN: Send to application layer
     deactivate VCL
-    
+
     VCL->>UCL: Propagate message to other controls
     activate UCL
     Note over UCL: Check if message ID seen before
@@ -227,11 +219,10 @@ sequenceDiagram
     deactivate SCL
     deactivate SN
 ```
-	
+
 </details>
 
 ---
-
 
 ## Data Flow 🌊
 
@@ -260,35 +251,36 @@ sequenceDiagram
 
     S->>+U: Broadcast reading
     Note over U: Store reading in local datastore
-    
-    
+
+
     Note over V1,V3: Verifier 1 discovers an unverified reading
-    
+
     V1->>V2: Lock Request (itemID)
     V1->>V3: Lock Request (itemID)
-    
+
     V2->>V1: Lock Reply (granted: true)
     V3->>V1: Lock Reply (granted: true)
-    
+
     Note over V1: All nodes granted lock
-    
+
     V1->>V2: Lock Acquired (itemID)
     Note over V2: Mark item as locked
     V1->>V3: Lock Acquired (itemID)
     Note over V3: Mark item as locked
-    
+
     Note over V1: Process item (2-second wait)
-    
-    
+
+
     Note over V1: Mark item as verified
-    
+
     V1->>V2: Lock Release & Verified Value (itemID, value)
     V1->>V3: Lock Release & Verified Value (itemID, value)
-    
+
     Note over V2,V3: Update verified status & clear locks)
     V1->>U: Lock Release & Verified Value (itemID, value)
     Note over U: Update verified status
-```
+
+````
 
 </details>
 
@@ -296,7 +288,7 @@ sequenceDiagram
 
 Below is a proposition of class diagram.
 
-- Senrors, Verifiers, Users are all Nodes, thus share a basic structure (Node class), 
+- Senrors, Verifiers, Users are all Nodes, thus share a basic structure (Node class),
   and has their own DataStore.
 - Sensors produce Readings
 - clocks are represented via integers.
@@ -304,7 +296,7 @@ Below is a proposition of class diagram.
 
 <details open>
   <summary>Class Diagram</summary>
-	
+
 ```mermaid
 classDiagram
     class Node {
@@ -342,7 +334,7 @@ classDiagram
         -generateReading() Reading
     }
 
-   
+
     class VerifierNode {
         -processingCapacity: int
         -threshold: float64
@@ -380,7 +372,7 @@ classDiagram
         +getValueFromReadingID(itemID string): (float32, error)
         +getReadingIndexFromSender_ID(senderID string, itemID string): (int, error)
         +isItemInReadings(itemID string): (bool, error)
-    } 
+    }
 
     class UserNode {
         -func predictionFunc(values []float32, decay float32) float32
@@ -396,7 +388,7 @@ classDiagram
         -processDatabse()
         -printDatabase()
     }
-	
+
     class ControlLayer {
         -sync.RWMutex mu
         -string id
@@ -424,7 +416,7 @@ classDiagram
         +ClosePearDiscovery()
         +SawThatMessageBefore(msg string) bool
     }
-	
+
     class Reading {
 	+ReadingID string
         +Temperature float32
@@ -433,7 +425,7 @@ classDiagram
         +IsVerified bool
 	+VerifierID string
     }
-    
+
         class MID {
         +int V
         +LessThan(other MID) bool
@@ -443,32 +435,32 @@ classDiagram
         +IsAdjacentBelow(other MID) bool
         +String() string
     }
-    
+
     class MIDPair {
         +MID Lower
         +MID Upper
     }
-    
+
     class MIDPairIntervals {
         +[]MIDPair Intervals
         +AddPair(pair MIDPair) void
         +Contains(clock MID) bool
         +AddMID(clk MID) void
     }
-    
+
     class MIDWatcher {
         +map[string]MIDPairIntervals site_clock
         +ContainsMID(nodeID string, clk MID) bool
         +AddMIDToNode(nodeID string, clk MID) void
         +String() string
     }
-    
+
     %% Relationships
-    
+
     MIDPair "1" --* "2" MID : contains
     MIDPairIntervals "1" --* "0..*" MIDPair : contains
     MIDWatcher "1" --* "0..*" MIDPairIntervals : contains per node
-    
+
     note for MID "Represents a Message ID"
     note for MIDPair "Defines bounds for message intervals"
     note for MIDPairIntervals "Manages collections of intervals"
@@ -478,17 +470,17 @@ classDiagram
     BaseNode <|-- SensorNode : extends
     BaseNode <|-- VerifierNode : extends
     BaseNode <|-- UserNode : extends
-    
+
     SensorNode *-- Reading
-    VerifierNode o-- Reading 
+    VerifierNode o-- Reading
     UserNode o-- Reading
-    
+
     ControlLayer *-- MIDWatcher : has
-    
+
     VerifierNode "1" --o "1" ControlLayer
     UserNode "1" --o "1" ControlLayer
-    SensorNode "1" --o "1" ControlLayer 
-    
-```
+    SensorNode "1" --o "1" ControlLayer
+
+````
 
 </details>

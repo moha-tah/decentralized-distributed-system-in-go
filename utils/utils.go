@@ -28,7 +28,9 @@ func SynchroniseVectorClock(vc1 []int, vc2 []int, caller_index int) ([]int, erro
 	for i := 0; i < len(vc1); i++ {
 		newVC[i] = max(vc1[i], vc2[i])
 	}
-	newVC[caller_index] += 1
+	if len(newVC) > caller_index {
+		newVC[caller_index] += 1
+	}
 	return newVC, nil
 }
 
